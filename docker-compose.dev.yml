@@ -1,7 +1,7 @@
-# Docker Compose für lokale Entwicklung
-# Startet Mattermost/Mostlymatter zusammen mit Keycloak als OIDC-Provider
+# Docker Compose for local development
+# Starts Mattermost/Mostlymatter together with Keycloak as an OIDC provider
 #
-# Verwendung:
+# Usage:
 #   docker compose up -d
 #   Mattermost: http://localhost:8065
 #   Keycloak:   http://localhost:8080 (admin/admin)
@@ -23,7 +23,7 @@ services:
 
   mattermost:
     image: mattermost/mattermost-enterprise-edition:latest
-    # Alternativ für Mostlymatter: eigenes Image bauen
+    # Alternatively for Mostlymatter: build a custom image
     depends_on:
       postgres:
         condition: service_healthy

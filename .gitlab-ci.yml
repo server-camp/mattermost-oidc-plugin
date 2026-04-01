@@ -164,7 +164,7 @@ release:
   release:
     tag_name: ${CI_COMMIT_TAG}
     name: "OIDC Plugin ${CI_COMMIT_TAG}"
-    description: "Release ${CI_COMMIT_TAG} des OIDC Plugins."
+    description: "Release ${CI_COMMIT_TAG} of the OIDC Plugin."
     assets:
       links:
         - name: "${PLUGIN_ID}-${PLUGIN_VERSION}.tar.gz"

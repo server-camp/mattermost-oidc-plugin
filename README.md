@@ -1,16 +1,13 @@
 # Mostlymatter OIDC Plugin
 
-Ein Mattermost-Plugin, das **OpenID Connect (OIDC)**-Authentifizierung
-für [Mostlymatter](https://framagit.org/framasoft/framateam/mostlymatter) (und standard Mattermost) bereitstellt — *
-*ohne Enterprise-Lizenz**.
+A Mattermost plugin that adds **OpenID Connect (OIDC)** authentication
+for [Mostlymatter](https://framagit.org/framasoft/framateam/mostlymatter) (and standard Mattermost) — **without an Enterprise license**.
 
-## Warum dieses Plugin?
+## Why this plugin?
 
-Mattermost beschränkt generische OIDC-Authentifizierung auf die Enterprise/Professional-Editionen. Die kostenlose Team
-Edition unterstützt nur GitLab als SSO-Provider. Dieses Plugin umgeht diese Einschränkung, indem es einen vollständigen
-OIDC-Flow als Plugin implementiert, das mit jedem standardkonformen OIDC-Provider funktioniert.
+Mattermost restricts generic OIDC authentication to the Enterprise/Professional editions. The free Team Edition only supports GitLab as an SSO provider. This plugin bypasses that limitation by implementing a full OIDC flow as a plugin that works with any standards-compliant OIDC provider.
 
-### Unterstützte OIDC-Provider
+### Supported OIDC Providers
 
 - **Keycloak**
 - **Authentik**
@@ -21,9 +18,9 @@ OIDC-Flow als Plugin implementiert, das mit jedem standardkonformen OIDC-Provide
 - **Auth0**
 - **Azure AD / Entra ID**
 - **Google Workspace**
-- **Jeder andere OIDC-konforme Provider**
+- **Any other OIDC-compliant provider**
 
-## Architektur
+## Architecture
 
 ```
 ┌─────────────┐    ┌──────────────────┐    ┌──────────────┐
@@ -32,230 +29,230 @@ OIDC-Flow als Plugin implementiert, das mit jedem standardkonformen OIDC-Provide
 └─────────────┘    └──────────────────┘    └──────────────┘
 ```
 
-**Ablauf:**
+**Flow:**
 
-1. User klickt auf den OIDC-Login-Button
-2. Plugin leitet zum OIDC-Provider weiter (Authorization Code Flow)
-3. User authentifiziert sich beim Provider
-4. Provider leitet zurück zum Plugin-Callback
-5. Plugin tauscht Code gegen Tokens, verifiziert ID-Token
-6. Plugin erstellt/aktualisiert den Mattermost-User und erstellt eine Session
+1. User clicks the OIDC login button
+2. Plugin redirects to the OIDC provider (Authorization Code Flow)
+3. User authenticates with the provider
+4. Provider redirects back to the plugin callback
+5. Plugin exchanges the code for tokens, verifies the ID token
+6. Plugin creates/updates the Mattermost user and creates a session
 
-## Voraussetzungen
+## Prerequisites
 
 - **Go** 1.22+
-- **Node.js** 16+ und npm
+- **Node.js** 16+ and npm
 - **Make**
 - Mattermost/Mostlymatter Server v9.0+
 
 ## Build
 
 ```bash
-# Repository klonen
-git clone <dieses-repo>
+# Clone the repository
+git clone <this-repo>
 cd mostlymatter-oidc-plugin
 
-# Plugin bauen (Server + Webapp + Bundle)
+# Build the plugin (server + webapp + bundle)
 make all
 
-# Das Bundle liegt dann unter:
-# dist/mattermost-oidc-1.0.0.tar.gz
+# The bundle will be at:
+# dist/mattermost-oidc-0.1.0.tar.gz
 ```
 
-### Nur Server oder Webapp bauen
+### Build server or webapp only
 
 ```bash
-make server   # Go-Binaries für alle Plattformen
-make webapp   # Webpack-Bundle
+make server   # Go binaries for all platforms
+make webapp   # Webpack bundle
 ```
 
 ## Tests
 
 ```bash
-# Go-Tests mit Race-Detection ausführen
+# Run Go tests with race detection
 make test
 
-# Go-Linting (erfordert golangci-lint)
+# Go linting (requires golangci-lint)
 make lint
 ```
 
 ## Installation
 
-### Methode 1: System Console
+### Method 1: System Console
 
-1. Gehe zu **System Console → Plugin Management**
-2. Klicke **Upload Plugin**
-3. Wähle `dist/mattermost-oidc-1.0.0.tar.gz`
-4. Aktiviere das Plugin
+1. Go to **System Console → Plugin Management**
+2. Click **Upload Plugin**
+3. Select `dist/mattermost-oidc-0.1.0.tar.gz`
+4. Enable the plugin
 
-### Methode 2: CLI Deploy
+### Method 2: CLI Deploy
 
 ```bash
 export MM_SERVICESETTINGS_SITEURL=https://chat.example.com
-export MM_ADMIN_TOKEN=dein-admin-token
+export MM_ADMIN_TOKEN=your-admin-token
 make deploy
 ```
 
-## Konfiguration
+## Configuration
 
-### 1. OIDC-Provider einrichten
+### 1. Set up your OIDC provider
 
-Erstelle eine neue OIDC-Anwendung/Client bei deinem Provider mit folgenden Einstellungen:
+Create a new OIDC application/client with your provider using the following settings:
 
-| Einstellung      | Wert                                                                     |
+| Setting          | Value                                                                    |
 |------------------|--------------------------------------------------------------------------|
-| **Client-Typ**   | Confidential                                                             |
+| **Client Type**  | Confidential                                                             |
 | **Grant Type**   | Authorization Code                                                       |
 | **Redirect URI** | `https://chat.example.com/plugins/mattermost-oidc/oauth2/callback` |
 | **Scopes**       | `openid profile email`                                                   |
 
-### 2. Plugin konfigurieren
+### 2. Configure the plugin
 
-Gehe zu **System Console → Plugins → OIDC Authentication**:
+Go to **System Console → Plugins → OIDC Authentication**:
 
-| Feld                     | Beschreibung                        | Beispiel                                                   |
+| Field                    | Description                         | Example                                                    |
 |--------------------------|-------------------------------------|------------------------------------------------------------|
-| **Enable**               | Plugin aktivieren                   | `true`                                                     |
+| **Enable**               | Enable the plugin                   | `true`                                                     |
 | **Discovery Endpoint**   | OIDC Discovery URL                  | `https://idp.example.com/.well-known/openid-configuration` |
-| **Client ID**            | Client-ID vom Provider              | `mostlymatter`                                             |
-| **Client Secret**        | Client-Secret vom Provider          | `geheim123`                                                |
-| **Scopes**               | Angeforderte Scopes                 | `openid profile email`                                     |
-| **Button Text**          | Text auf dem Login-Button           | `Mit SSO anmelden`                                         |
-| **Button Color**         | Farbe des Login-Buttons             | `#0058CC`                                                  |
-| **Username Claim**       | OIDC-Claim für Username             | `preferred_username`                                       |
-| **Email Claim**          | OIDC-Claim für E-Mail               | `email`                                                    |
-| **Auto-Create Accounts** | Neue Accounts automatisch erstellen | `true`                                                     |
-| **Default Team**         | Team-Slug für neue User             | `main`                                                     |
+| **Client ID**            | Client ID from your provider        | `mostlymatter`                                             |
+| **Client Secret**        | Client secret from your provider    | `secret123`                                                |
+| **Scopes**               | Requested scopes                    | `openid profile email`                                     |
+| **Button Text**          | Text on the login button            | `Log in with SSO`                                          |
+| **Button Color**         | Color of the login button           | `#0058CC`                                                  |
+| **Username Claim**       | OIDC claim for username             | `preferred_username`                                       |
+| **Email Claim**          | OIDC claim for email                | `email`                                                    |
+| **Auto-Create Accounts** | Automatically create new accounts   | `true`                                                     |
+| **Default Team**         | Team slug for new users             | `main`                                                     |
 
-### 3. Server neustarten
+### 3. Restart the server
 
-Nach dem Speichern muss der Mattermost-Server neugestartet werden.
+After saving, the Mattermost server must be restarted.
 
-## Beispiel: Keycloak-Konfiguration
+## Example: Keycloak Configuration
 
 ```
 # In Keycloak:
-# 1. Neuen Client erstellen
+# 1. Create a new client
 #    - Client ID: mostlymatter
 #    - Client Protocol: openid-connect
 #    - Access Type: confidential
 #    - Valid Redirect URIs: https://chat.example.com/plugins/mattermost-oidc/oauth2/callback
 #
-# 2. Client Scopes sicherstellen:
-#    - openid, profile, email müssen zugewiesen sein
+# 2. Ensure client scopes are assigned:
+#    - openid, profile, email must be assigned
 #
 # 3. Discovery Endpoint:
 #    https://keycloak.example.com/realms/myrealm/.well-known/openid-configuration
 ```
 
-## Beispiel: Authentik-Konfiguration
+## Example: Authentik Configuration
 
 ```
 # In Authentik:
-# 1. OAuth2/OpenID Provider erstellen
+# 1. Create an OAuth2/OpenID Provider
 #    - Name: Mostlymatter
 #    - Authorization flow: default-provider-authorization-explicit-consent
 #    - Redirect URIs: https://chat.example.com/plugins/mattermost-oidc/oauth2/callback
 #    - Scopes: openid, profile, email
 #
-# 2. Application erstellen und Provider zuweisen
+# 2. Create an application and assign the provider
 #
 # 3. Discovery Endpoint:
 #    https://sso.example.com/application/o/mostlymatter/.well-known/openid-configuration
 ```
 
-## Projektstruktur
+## Project Structure
 
 ```
 mostlymatter-oidc-plugin/
-├── plugin.json              # Plugin-Manifest und Settings-Schema
-├── Makefile                 # Build-System
-├── README.md                # Diese Datei
+├── plugin.json              # Plugin manifest and settings schema
+├── Makefile                 # Build system
+├── README.md                # This file
 ├── assets/
-│   └── oidc-icon.svg        # Plugin-Icon
+│   └── oidc-icon.svg        # Plugin icon
 ├── server/
-│   ├── go.mod               # Go-Modul-Definition
-│   ├── main.go              # Entry Point
-│   ├── plugin.go            # Plugin-Struct, Lifecycle, Router
-│   ├── configuration.go     # Konfigurationstyp und Validierung
-│   └── oauth2.go            # OIDC/OAuth2 Flow-Handler
+│   ├── go.mod               # Go module definition
+│   ├── main.go              # Entry point
+│   ├── plugin.go            # Plugin struct, lifecycle, router
+│   ├── configuration.go     # Configuration type and validation
+│   └── oauth2.go            # OIDC/OAuth2 flow handlers
 └── webapp/
-    ├── package.json         # Node-Abhängigkeiten
-    ├── webpack.config.js    # Webpack-Konfiguration
+    ├── package.json         # Node dependencies
+    ├── webpack.config.js    # Webpack configuration
     └── src/
-        └── index.js         # Login-Button React-Komponente
+        └── index.js         # Login button React component
 ```
 
-## Sicherheit
+## Security
 
-- **HMAC-signierte State-Parameter** verhindern CSRF-Angriffe
-- **State-Tokens** werden im KV-Store mit Ablaufzeit gespeichert
-- **ID-Token-Verifizierung** über die JWKS des Providers
-- **Kein Client-Secret** wird an den Browser gesendet
-- **Secure Cookies** werden bei HTTPS-Konfiguration gesetzt
-- **Username-Sanitisierung** verhindert Injection-Angriffe
+- **HMAC-signed state parameters** prevent CSRF attacks
+- **State tokens** are stored in the KV store with an expiry time
+- **ID token verification** via the provider's JWKS
+- **No client secret** is sent to the browser
+- **Secure cookies** are set when HTTPS is configured
+- **Username sanitization** prevents injection attacks
 
-## Fehlerbehebung
+## Troubleshooting
 
 **"OIDC provider not initialized"**
-→ Discovery Endpoint prüfen, Server-Logs checken
+→ Check the discovery endpoint, review server logs
 
 **"Authentication session expired"**
-→ Sicherstellen, dass die Uhren von Mattermost und dem OIDC-Provider synchron sind
+→ Ensure that the clocks of Mattermost and the OIDC provider are synchronized
 
 **"email claim is empty"**
-→ Prüfen, ob der OIDC-Provider den `email`-Scope zurückgibt und der Claim-Name korrekt ist
+→ Check that the OIDC provider returns the `email` scope and that the claim name is correct
 
-**Login-Button nicht sichtbar**
-→ Plugin in System Console aktivieren, Browser-Cache leeren
+**Login button not visible**
+→ Enable the plugin in the System Console, clear browser cache
 
 **"failed to create user"**
-→ Prüfen, ob Auto-Create aktiviert ist und ob der Username bereits existiert
+→ Check that auto-create is enabled and that the username doesn't already exist
 
-## Entwicklung
+## Development
 
-### Entwicklungsumgebung mit Docker
+### Docker Development Environment
 
-Das Repository enthält eine `docker-compose.dev.yml` mit Mattermost und Keycloak als OIDC-Provider:
+The repository includes a `docker-compose.dev.yml` with Mattermost and Keycloak as an OIDC provider:
 
 ```bash
-# Umgebung starten
+# Start the environment
 docker-compose -f docker-compose.dev.yml up -d
 
 # Mattermost:  http://localhost:8065
 # Keycloak:    http://localhost:8080 (Admin: admin / admin)
 
-# Umgebung stoppen
+# Stop the environment
 docker-compose -f docker-compose.dev.yml down
 ```
 
-Nach dem Start von Mattermost: Admin-Account erstellen, unter **System Console → Plugin Management** Plugin-Uploads aktivieren, dann das gebaute Bundle hochladen.
+After starting Mattermost: create an admin account, enable plugin uploads under **System Console → Plugin Management**, then upload the built bundle.
 
 ### Build & Deploy
 
 ```bash
 export MM_SERVICESETTINGS_SITEURL=http://localhost:8065
-export MM_ADMIN_TOKEN=dein-token
+export MM_ADMIN_TOKEN=your-token
 
-# Plugin bauen und deployen bei Änderungen
+# Build and deploy the plugin
 make deploy
 
-# Oder mit Watch-Modus für die Webapp:
+# Or use watch mode for the webapp:
 cd webapp && npm run dev
 ```
 
 ## CI/CD
 
-Das Repository nutzt GitLab CI (`.gitlab-ci.yml`) mit drei Stages:
+The repository uses GitLab CI (`.gitlab-ci.yml`) with three stages:
 
-| Stage     | Jobs                                         | Beschreibung                                          |
-|-----------|----------------------------------------------|-------------------------------------------------------|
-| **test**  | `test:server`, `test:webapp`, `lint:server`  | Go-Tests mit Race-Detection, Webapp-Build-Check, Lint |
-| **build** | `build:server`, `build:webapp`, `build:bundle` | Cross-Compile, Webpack-Build, Plugin-Bundle (.tar.gz) |
-| **release** | `release`                                  | GitLab Release mit Bundle-Download (nur auf Tags)     |
+| Stage       | Jobs                                           | Description                                           |
+|-------------|-------------------------------------------------|-------------------------------------------------------|
+| **test**    | `test:server`, `test:webapp`, `lint:server`     | Go tests with race detection, webapp build check, lint |
+| **build**   | `build:server`, `build:webapp`, `build:bundle`  | Cross-compile, webpack build, plugin bundle (.tar.gz)  |
+| **release** | `release`                                       | GitLab release with bundle download (tags only)        |
 
-Die Pipeline läuft automatisch bei jedem Push und Merge Request. Releases werden bei getaggten Commits erstellt (z.B. `git tag v1.0.0 && git push --tags`).
+The pipeline runs automatically on every push and merge request. Releases are created for tagged commits (e.g. `git tag v1.0.0 && git push --tags`).
 
-## Lizenz
+## License
 
-Apache License 2.0 — kompatibel mit Mattermost und Mostlymatter.
+Apache License 2.0 — compatible with Mattermost and Mostlymatter.
