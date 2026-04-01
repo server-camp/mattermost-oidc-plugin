@@ -1,0 +1,22 @@
+# Build artifacts
+dist/
+server/dist/
+webapp/dist/
+webapp/node_modules/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Go
+vendor/
+
+# Environment
+.env

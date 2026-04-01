@@ -1,0 +1,134 @@
+{
+    "id": "de.tldev.mattermost-oidc",
+    "name": "Mostlymatter OIDC Authentication",
+    "description": "OpenID Connect (OIDC) authentication plugin for Mostlymatter/Mattermost. Enables SSO login via any standard OIDC provider (Keycloak, Authentik, Authelia, Dex, etc.) without requiring an Enterprise license.",
+    "homepage_url": "https://tldev.de",
+    "icon_path": "assets/oidc-icon.svg",
+    "version": "1.0.0",
+    "min_server_version": "9.0.0",
+    "server": {
+        "executables": {
+            "linux-amd64": "server/dist/plugin-linux-amd64",
+            "linux-arm64": "server/dist/plugin-linux-arm64",
+            "darwin-amd64": "server/dist/plugin-darwin-amd64",
+            "darwin-arm64": "server/dist/plugin-darwin-arm64"
+        }
+    },
+    "webapp": {
+        "bundle_path": "webapp/dist/main.js"
+    },
+    "settings_schema": {
+        "header": "Configure OpenID Connect (OIDC) authentication for your Mostlymatter instance. This plugin enables SSO login via any standard OIDC-compliant provider.",
+        "footer": "After saving, restart Mattermost for changes to take effect. Redirect URI for your OIDC provider: `{your-mattermost-url}/plugins/de.tldev.mattermost-oidc/oauth2/callback`",
+        "settings": [
+            {
+                "key": "Enable",
+                "display_name": "Enable OIDC Authentication",
+                "type": "bool",
+                "help_text": "When true, users can log in via OpenID Connect.",
+                "default": false
+            },
+            {
+                "key": "DiscoveryEndpoint",
+                "display_name": "Discovery Endpoint",
+                "type": "text",
+                "help_text": "The OpenID Connect Discovery endpoint URL (e.g., https://idp.example.com/.well-known/openid-configuration). The plugin will auto-discover authorization, token, userinfo, and JWKS endpoints.",
+                "default": "",
+                "placeholder": "https://idp.example.com/.well-known/openid-configuration"
+            },
+            {
+                "key": "ClientID",
+                "display_name": "Client ID",
+                "type": "text",
+                "help_text": "The OAuth 2.0 Client ID registered with your OIDC provider.",
+                "default": "",
+                "placeholder": "your-client-id"
+            },
+            {
+                "key": "ClientSecret",
+                "display_name": "Client Secret",
+                "type": "text",
+                "help_text": "The OAuth 2.0 Client Secret registered with your OIDC provider.",
+                "default": "",
+                "placeholder": "your-client-secret"
+            },
+            {
+                "key": "Scopes",
+                "display_name": "Scopes",
+                "type": "text",
+                "help_text": "Space-separated list of OIDC scopes to request. Must include 'openid'. Typical: 'openid profile email'.",
+                "default": "openid profile email"
+            },
+            {
+                "key": "ButtonText",
+                "display_name": "Login Button Text",
+                "type": "text",
+                "help_text": "Text shown on the SSO login button.",
+                "default": "Log in with OIDC"
+            },
+            {
+                "key": "ButtonColor",
+                "display_name": "Login Button Color",
+                "type": "text",
+                "help_text": "Hex color code for the login button (e.g., #0058CC).",
+                "default": "#0058CC"
+            },
+            {
+                "key": "UsernameClaim",
+                "display_name": "Username Claim",
+                "type": "text",
+                "help_text": "The OIDC claim to use as the Mattermost username. Common: 'preferred_username', 'sub', 'nickname'.",
+                "default": "preferred_username"
+            },
+            {
+                "key": "EmailClaim",
+                "display_name": "Email Claim",
+                "type": "text",
+                "help_text": "The OIDC claim to use as the user's email address.",
+                "default": "email"
+            },
+            {
+                "key": "FirstNameClaim",
+                "display_name": "First Name Claim",
+                "type": "text",
+                "help_text": "The OIDC claim to use for the user's first name.",
+                "default": "given_name"
+            },
+            {
+                "key": "LastNameClaim",
+                "display_name": "Last Name Claim",
+                "type": "text",
+                "help_text": "The OIDC claim to use for the user's last name.",
+                "default": "family_name"
+            },
+            {
+                "key": "AutoCreateAccounts",
+                "display_name": "Auto-Create Accounts",
+                "type": "bool",
+                "help_text": "Automatically create Mattermost accounts for users who authenticate via OIDC for the first time.",
+                "default": true
+            },
+            {
+                "key": "AutoLinkByEmail",
+                "display_name": "Auto-Link Existing Accounts by Email",
+                "type": "bool",
+                "help_text": "When enabled, existing local Mattermost accounts (without an external auth provider) will be automatically linked to OIDC on first login if the email matches. Accounts already linked to another auth service (LDAP, SAML, etc.) are never auto-linked.",
+                "default": false
+            },
+            {
+                "key": "DefaultTeam",
+                "display_name": "Default Team",
+                "type": "text",
+                "help_text": "Team name (slug) to add newly created users to. Leave blank to skip auto-joining.",
+                "default": ""
+            },
+            {
+                "key": "EncryptionKey",
+                "display_name": "State Encryption Key",
+                "type": "generated",
+                "help_text": "Auto-generated key used to encrypt OAuth state parameters. Do not modify.",
+                "default": ""
+            }
+        ]
+    }
+}

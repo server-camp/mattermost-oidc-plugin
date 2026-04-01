@@ -1,0 +1,139 @@
+stages:
+  - test
+  - build
+  - release
+
+variables:
+  PLUGIN_ID: de.tldev.mattermost-oidc
+  PLUGIN_VERSION: "1.0.0"
+
+# --- Caching ---
+
+.go-cache: &go-cache
+  cache:
+    key: go-mod-${CI_COMMIT_REF_SLUG}
+    paths:
+      - server/.go/pkg/mod/
+    policy: pull-push
+
+.node-cache: &node-cache
+  cache:
+    key: node-${CI_COMMIT_REF_SLUG}
+    paths:
+      - webapp/node_modules/
+    policy: pull-push
+
+# ====================
+# Stage: test
+# ====================
+
+test:server:
+  stage: test
+  image: golang:1.22
+  <<: *go-cache
+  variables:
+    GOMODCACHE: ${CI_PROJECT_DIR}/server/.go/pkg/mod
+  script:
+    - cd server
+    - go test ./... -v -race -count=1 -coverprofile=coverage.out
+    - go tool cover -func=coverage.out
+  coverage: '/total:\s+\(statements\)\s+(\d+\.\d+)%/'
+
+test:webapp:
+  stage: test
+  image: node:18
+  <<: *node-cache
+  script:
+    - cd webapp
+    - npm ci
+    - npm run build
+  artifacts:
+    paths:
+      - webapp/dist/
+    expire_in: 1 hour
+
+lint:server:
+  stage: test
+  image: golangci/golangci-lint:latest
+  cache:
+    key: go-mod-${CI_COMMIT_REF_SLUG}
+    paths:
+      - server/.go/pkg/mod/
+    policy: pull
+  variables:
+    GOMODCACHE: ${CI_PROJECT_DIR}/server/.go/pkg/mod
+  script:
+    - cd server
+    - golangci-lint run ./...
+  allow_failure: true
+
+# ====================
+# Stage: build
+# ====================
+
+build:server:
+  stage: build
+  image: golang:1.22
+  <<: *go-cache
+  variables:
+    GOMODCACHE: ${CI_PROJECT_DIR}/server/.go/pkg/mod
+    CGO_ENABLED: "0"
+  script:
+    - cd server
+    - |
+      for platform in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64; do
+        os=$(echo $platform | cut -d'/' -f1)
+        arch=$(echo $platform | cut -d'/' -f2)
+        echo "Building for $os/$arch..."
+        GOOS=$os GOARCH=$arch go build -mod=readonly -o dist/plugin-$os-$arch ./...
+      done
+  artifacts:
+    paths:
+      - server/dist/
+    expire_in: 1 hour
+
+build:bundle:
+  stage: build
+  image: alpine:latest
+  needs:
+    - job: build:server
+      artifacts: true
+    - job: test:webapp
+      artifacts: true
+  script:
+    - mkdir -p dist/${PLUGIN_ID}/server/dist
+    - mkdir -p dist/${PLUGIN_ID}/webapp/dist
+    - mkdir -p dist/${PLUGIN_ID}/assets
+    - cp plugin.json dist/${PLUGIN_ID}/
+    - cp server/dist/* dist/${PLUGIN_ID}/server/dist/
+    - cp webapp/dist/main.js dist/${PLUGIN_ID}/webapp/dist/
+    - if [ -d assets ]; then cp -r assets/* dist/${PLUGIN_ID}/assets/ 2>/dev/null || true; fi
+    - cd dist && tar -czf ${PLUGIN_ID}-${PLUGIN_VERSION}.tar.gz ${PLUGIN_ID}
+  artifacts:
+    paths:
+      - dist/${PLUGIN_ID}-${PLUGIN_VERSION}.tar.gz
+    expire_in: 30 days
+
+# ====================
+# Stage: release
+# ====================
+
+release:
+  stage: release
+  image: registry.gitlab.com/gitlab-org/release-cli:latest
+  needs:
+    - job: build:bundle
+      artifacts: true
+  rules:
+    - if: $CI_COMMIT_TAG
+  script:
+    - echo "Creating release for ${CI_COMMIT_TAG}"
+  release:
+    tag_name: ${CI_COMMIT_TAG}
+    name: "Mostlymatter OIDC Plugin ${CI_COMMIT_TAG}"
+    description: "Release ${CI_COMMIT_TAG} des Mostlymatter OIDC Plugins."
+    assets:
+      links:
+        - name: "${PLUGIN_ID}-${PLUGIN_VERSION}.tar.gz"
+          url: "${CI_PROJECT_URL}/-/jobs/artifacts/${CI_COMMIT_TAG}/raw/dist/${PLUGIN_ID}-${PLUGIN_VERSION}.tar.gz?job=build%3Abundle"
+          link_type: package
