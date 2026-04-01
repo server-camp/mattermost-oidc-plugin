@@ -3,6 +3,7 @@ dist/
 server/dist/
 webapp/dist/
 webapp/node_modules/
+server/mattermost-plugin-oidc
 
 # IDE
 .idea/
