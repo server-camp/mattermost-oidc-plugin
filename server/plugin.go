@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"net/http"
+	"strings"
 	"sync"
 
 	oidc "github.com/coreos/go-oidc/v3/oidc"
@@ -67,7 +68,9 @@ func (p *Plugin) OnActivate() error {
 		appCfg := p.API.GetPluginConfig()
 		if appCfg != nil {
 			appCfg["EncryptionKey"] = key
-			p.API.SavePluginConfig(appCfg)
+			if saveErr := p.API.SavePluginConfig(appCfg); saveErr != nil {
+				p.API.LogError("Failed to save plugin config with encryption key", "error", saveErr.Error())
+			}
 		}
 	}
 
@@ -140,9 +143,13 @@ func (p *Plugin) initOIDCProvider() error {
 
 	ctx := context.Background()
 
-	provider, err := oidc.NewProvider(ctx, config.DiscoveryEndpoint)
+	// oidc.NewProvider expects the issuer URL and appends /.well-known/openid-configuration itself.
+	// Strip the suffix if the user accidentally included it.
+	issuer := strings.TrimSuffix(config.DiscoveryEndpoint, "/.well-known/openid-configuration")
+
+	provider, err := oidc.NewProvider(ctx, issuer)
 	if err != nil {
-		return fmt.Errorf("failed to discover OIDC provider at %s: %w", config.DiscoveryEndpoint, err)
+		return fmt.Errorf("failed to discover OIDC provider at %s: %w", issuer, err)
 	}
 
 	siteURL := p.API.GetConfig().ServiceSettings.SiteURL

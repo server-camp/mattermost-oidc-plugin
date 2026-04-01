@@ -226,7 +226,7 @@ func (p *Plugin) handleOAuth2Callback(w http.ResponseWriter, r *http.Request) {
 
 	// Set the session token cookie and redirect
 	siteURL := p.getSiteURL()
-	p.setSessionCookie(w, r, session.Token, siteURL)
+	p.setSessionCookie(w, r, session, siteURL)
 
 	returnTo := state.ReturnTo
 	if returnTo == "" || !strings.HasPrefix(returnTo, "/") || strings.HasPrefix(returnTo, "//") || strings.ContainsRune(returnTo, '\\') {
@@ -417,7 +417,9 @@ func (p *Plugin) handleGetPublicConfig(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(publicConfig)
+	if err := json.NewEncoder(w).Encode(publicConfig); err != nil {
+		p.API.LogError("Failed to encode public config", "error", err.Error())
+	}
 }
 
 // signState creates an HMAC-signed state string.
@@ -447,12 +449,12 @@ func (p *Plugin) verifyAndExtractState(signedState string) (string, error) {
 }
 
 // setSessionCookie writes the Mattermost session token as a cookie.
-func (p *Plugin) setSessionCookie(w http.ResponseWriter, r *http.Request, token string, siteURL string) {
+func (p *Plugin) setSessionCookie(w http.ResponseWriter, r *http.Request, session *model.Session, siteURL string) {
 	secure := strings.HasPrefix(siteURL, "https")
 
 	cookie := &http.Cookie{
 		Name:     "MMAUTHTOKEN",
-		Value:    token,
+		Value:    session.Token,
 		Path:     "/",
 		HttpOnly: true,
 		Secure:   secure,
@@ -462,6 +464,15 @@ func (p *Plugin) setSessionCookie(w http.ResponseWriter, r *http.Request, token 
 
 	// Also set MMUSERID cookie for the webapp
 	// (The webapp uses this to know that a user is logged in)
+	useridCookie := &http.Cookie{
+		Name:     "MMUSERID",
+		Value:    session.UserId,
+		Path:     "/",
+		HttpOnly: false,
+		Secure:   secure,
+		SameSite: http.SameSiteLaxMode,
+	}
+	http.SetCookie(w, useridCookie)
 }
 
 // renderError renders a simple error page to the user.
@@ -469,7 +480,7 @@ func (p *Plugin) renderError(w http.ResponseWriter, message string) {
 	siteURL := p.getSiteURL()
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(http.StatusBadRequest)
-	fmt.Fprintf(w, `<!DOCTYPE html>
+	_, _ = fmt.Fprintf(w, `<!DOCTYPE html>
 <html>
 <head><title>Authentication Error</title></head>
 <body style="font-family: sans-serif; max-width: 600px; margin: 50px auto; text-align: center;">
