@@ -59,7 +59,7 @@ cd mostlymatter-oidc-plugin
 make all
 
 # Das Bundle liegt dann unter:
-# dist/de.tldev.mattermost-oidc-1.0.0.tar.gz
+# dist/mattermost-oidc-1.0.0.tar.gz
 ```
 
 ### Nur Server oder Webapp bauen
@@ -85,7 +85,7 @@ make lint
 
 1. Gehe zu **System Console → Plugin Management**
 2. Klicke **Upload Plugin**
-3. Wähle `dist/de.tldev.mattermost-oidc-1.0.0.tar.gz`
+3. Wähle `dist/mattermost-oidc-1.0.0.tar.gz`
 4. Aktiviere das Plugin
 
 ### Methode 2: CLI Deploy
@@ -106,12 +106,12 @@ Erstelle eine neue OIDC-Anwendung/Client bei deinem Provider mit folgenden Einst
 |------------------|--------------------------------------------------------------------------|
 | **Client-Typ**   | Confidential                                                             |
 | **Grant Type**   | Authorization Code                                                       |
-| **Redirect URI** | `https://chat.example.com/plugins/de.tldev.mattermost-oidc/oauth2/callback` |
+| **Redirect URI** | `https://chat.example.com/plugins/mattermost-oidc/oauth2/callback` |
 | **Scopes**       | `openid profile email`                                                   |
 
 ### 2. Plugin konfigurieren
 
-Gehe zu **System Console → Plugins → Mostlymatter OIDC Authentication**:
+Gehe zu **System Console → Plugins → OIDC Authentication**:
 
 | Feld                     | Beschreibung                        | Beispiel                                                   |
 |--------------------------|-------------------------------------|------------------------------------------------------------|
@@ -139,7 +139,7 @@ Nach dem Speichern muss der Mattermost-Server neugestartet werden.
 #    - Client ID: mostlymatter
 #    - Client Protocol: openid-connect
 #    - Access Type: confidential
-#    - Valid Redirect URIs: https://chat.example.com/plugins/de.tldev.mattermost-oidc/oauth2/callback
+#    - Valid Redirect URIs: https://chat.example.com/plugins/mattermost-oidc/oauth2/callback
 #
 # 2. Client Scopes sicherstellen:
 #    - openid, profile, email müssen zugewiesen sein
@@ -155,7 +155,7 @@ Nach dem Speichern muss der Mattermost-Server neugestartet werden.
 # 1. OAuth2/OpenID Provider erstellen
 #    - Name: Mostlymatter
 #    - Authorization flow: default-provider-authorization-explicit-consent
-#    - Redirect URIs: https://chat.example.com/plugins/de.tldev.mattermost-oidc/oauth2/callback
+#    - Redirect URIs: https://chat.example.com/plugins/mattermost-oidc/oauth2/callback
 #    - Scopes: openid, profile, email
 #
 # 2. Application erstellen und Provider zuweisen

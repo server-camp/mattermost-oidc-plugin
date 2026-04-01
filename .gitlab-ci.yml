@@ -4,8 +4,34 @@ stages:
   - release
 
 variables:
-  PLUGIN_ID: de.tldev.mattermost-oidc
-  PLUGIN_VERSION: "1.0.0"
+  PLUGIN_ID: mattermost-oidc
+
+# --- Version ---
+# Determines the plugin version from the git tag (v1.2.0 -> 1.2.0)
+# or falls back to the version in plugin.json for non-tag pipelines.
+
+set-version:
+  stage: .pre
+  image: alpine:latest
+  script:
+    - |
+      if [ -n "$CI_COMMIT_TAG" ]; then
+        VERSION="${CI_COMMIT_TAG#v}"
+        echo "Version from tag: ${VERSION}"
+        sed -i "s/\"version\": \".*\"/\"version\": \"${VERSION}\"/" plugin.json
+        sed -i "s/\"version\": \".*\"/\"version\": \"${VERSION}\"/" webapp/package.json
+      else
+        VERSION=$(sed -n 's/.*"version": "\(.*\)".*/\1/p' plugin.json | head -1)
+        echo "Version from plugin.json: ${VERSION}"
+      fi
+      echo "PLUGIN_VERSION=${VERSION}" > version.env
+  artifacts:
+    reports:
+      dotenv: version.env
+    paths:
+      - plugin.json
+      - webapp/package.json
+    expire_in: 1 hour
 
 # --- Caching ---
 
@@ -43,6 +69,9 @@ test:webapp:
   stage: test
   image: node:18
   <<: *node-cache
+  needs:
+    - job: set-version
+      artifacts: true
   script:
     - cd webapp
     - npm ci
@@ -96,6 +125,8 @@ build:bundle:
   stage: build
   image: alpine:latest
   needs:
+    - job: set-version
+      artifacts: true
     - job: build:server
       artifacts: true
     - job: test:webapp
@@ -122,16 +153,18 @@ release:
   stage: release
   image: registry.gitlab.com/gitlab-org/release-cli:latest
   needs:
+    - job: set-version
+      artifacts: true
     - job: build:bundle
       artifacts: true
   rules:
     - if: $CI_COMMIT_TAG
   script:
-    - echo "Creating release for ${CI_COMMIT_TAG}"
+    - echo "Creating release for ${CI_COMMIT_TAG} (version ${PLUGIN_VERSION})"
   release:
     tag_name: ${CI_COMMIT_TAG}
-    name: "Mostlymatter OIDC Plugin ${CI_COMMIT_TAG}"
-    description: "Release ${CI_COMMIT_TAG} des Mostlymatter OIDC Plugins."
+    name: "OIDC Plugin ${CI_COMMIT_TAG}"
+    description: "Release ${CI_COMMIT_TAG} des OIDC Plugins."
     assets:
       links:
         - name: "${PLUGIN_ID}-${PLUGIN_VERSION}.tar.gz"

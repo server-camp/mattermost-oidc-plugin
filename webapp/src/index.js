@@ -1,6 +1,6 @@
 import React, {useEffect, useState} from 'react';
 
-const PLUGIN_ID = 'de.tldev.mattermost-oidc';
+const PLUGIN_ID = 'mattermost-oidc';
 
 // OIDCLoginButton adds a custom SSO button to the Mattermost login page.
 const OIDCLoginButton = () => {

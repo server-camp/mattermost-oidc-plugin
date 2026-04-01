@@ -1,10 +1,10 @@
 {
-    "id": "de.tldev.mattermost-oidc",
-    "name": "Mostlymatter OIDC Authentication",
+    "id": "mattermost-oidc",
+    "name": "OIDC Authentication",
     "description": "OpenID Connect (OIDC) authentication plugin for Mostlymatter/Mattermost. Enables SSO login via any standard OIDC provider (Keycloak, Authentik, Authelia, Dex, etc.) without requiring an Enterprise license.",
     "homepage_url": "https://tldev.de",
     "icon_path": "assets/oidc-icon.svg",
-    "version": "1.0.0",
+    "version": "0.1.0",
     "min_server_version": "9.0.0",
     "server": {
         "executables": {
@@ -18,8 +18,8 @@
         "bundle_path": "webapp/dist/main.js"
     },
     "settings_schema": {
-        "header": "Configure OpenID Connect (OIDC) authentication for your Mostlymatter instance. This plugin enables SSO login via any standard OIDC-compliant provider.",
-        "footer": "After saving, restart Mattermost for changes to take effect. Redirect URI for your OIDC provider: `{your-mattermost-url}/plugins/de.tldev.mattermost-oidc/oauth2/callback`",
+        "header": "Configure OpenID Connect (OIDC) authentication for your Mostlymatter / Mattermost instance. This plugin enables SSO login via any standard OIDC-compliant provider.",
+        "footer": "After saving, restart Mattermost for changes to take effect. Redirect URI for your OIDC provider: `{your-mattermost-url}/plugins/mattermost-oidc/oauth2/callback`",
         "settings": [
             {
                 "key": "Enable",
@@ -120,13 +120,6 @@
                 "display_name": "Default Team",
                 "type": "text",
                 "help_text": "Team name (slug) to add newly created users to. Leave blank to skip auto-joining.",
-                "default": ""
-            },
-            {
-                "key": "EncryptionKey",
-                "display_name": "State Encryption Key",
-                "type": "generated",
-                "help_text": "Auto-generated key used to encrypt OAuth state parameters. Do not modify.",
                 "default": ""
             }
         ]

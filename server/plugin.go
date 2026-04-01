@@ -18,7 +18,7 @@ import (
 
 const (
 	// PluginID is the unique identifier for this plugin.
-	PluginID = "de.tldev.mattermost-oidc"
+	PluginID = "mattermost-oidc"
 
 	// AuthService is the service name stored in the user's AuthService field.
 	AuthService = "oidc"

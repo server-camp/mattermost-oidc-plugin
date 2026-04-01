@@ -1,6 +1,6 @@
 # Mattermost OIDC Plugin Makefile
-PLUGIN_ID  ?= de.tldev.mattermost-oidc
-PLUGIN_VERSION ?= 1.0.0
+PLUGIN_ID  ?= mattermost-oidc
+PLUGIN_VERSION ?= $(shell python3 -c "import json; print(json.load(open('plugin.json'))['version'])")
 BUNDLE_NAME ?= $(PLUGIN_ID)-$(PLUGIN_VERSION).tar.gz
 
 # Build targets

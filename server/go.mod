@@ -1,4 +1,4 @@
-module github.com/mostlymatter/mattermost-plugin-oidc
+module github.com/tldev-de/mattermost-plugin-oidc
 
 go 1.22
 

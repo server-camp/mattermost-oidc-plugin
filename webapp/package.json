@@ -1,7 +1,7 @@
 {
-    "name": "mostlymatter-oidc-webapp",
-    "version": "1.0.0",
-    "description": "Webapp component for the Mostlymatter OIDC plugin",
+    "name": "mattermost-oidc-webapp",
+    "version": "0.1.0",
+    "description": "Webapp component for the mattermost / mostlymatter OIDC plugin",
     "scripts": {
         "build": "webpack --mode=production",
         "dev": "webpack --mode=development --watch"

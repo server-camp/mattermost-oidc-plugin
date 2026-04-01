@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-Mattermost plugin (`de.tldev.mattermost-oidc`) that adds OpenID Connect SSO authentication without requiring an Enterprise license. Implements the full OAuth2 Authorization Code Flow as a plugin with a Go backend and React frontend.
+Mattermost plugin (`mattermost-oidc`) that adds OpenID Connect SSO authentication without requiring an Enterprise license. Implements the full OAuth2 Authorization Code Flow as a plugin with a Go backend and React frontend.
 
 ## Build Commands
 
@@ -12,7 +12,7 @@ Mattermost plugin (`de.tldev.mattermost-oidc`) that adds OpenID Connect SSO auth
 make all          # Build complete plugin bundle (server + webapp + tarball)
 make server       # Cross-compile Go binaries (linux/darwin, amd64/arm64, CGO_ENABLED=0)
 make webapp       # npm install + webpack production build
-make bundle       # Package into dist/de.tldev.mattermost-oidc-1.0.0.tar.gz
+make bundle       # Package into dist/mattermost-oidc-1.0.0.tar.gz
 make clean        # Remove all build artifacts including node_modules
 make deploy       # Upload to Mattermost (requires MM_SERVICESETTINGS_SITEURL and MM_ADMIN_TOKEN)
 ```
