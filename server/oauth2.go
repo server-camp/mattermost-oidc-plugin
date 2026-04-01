@@ -196,8 +196,9 @@ func (p *Plugin) handleOAuth2Callback(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Create a user session with expiry from Mattermost config
-	sessionLengthHours := 720 // default: 30 days
-	if mmConfig := p.API.GetConfig(); mmConfig != nil && mmConfig.ServiceSettings.SessionLengthWebInHours != nil {
+	mmConfig := p.API.GetConfig()
+	sessionLengthHours := 720 // fallback: 30 days
+	if mmConfig != nil && mmConfig.ServiceSettings.SessionLengthWebInHours != nil {
 		sessionLengthHours = *mmConfig.ServiceSettings.SessionLengthWebInHours
 	}
 
@@ -208,7 +209,6 @@ func (p *Plugin) handleOAuth2Callback(w http.ResponseWriter, r *http.Request) {
 
 	session, appErr := p.API.CreateSession(&model.Session{
 		UserId:        mmUser.Id,
-		DeviceId:      "",
 		Roles:         mmUser.GetRawRoles(),
 		IsOAuth:       true,
 		ExpiresAt:     model.GetMillis() + int64(sessionLengthHours)*60*60*1000,
@@ -341,7 +341,7 @@ func (p *Plugin) getOrCreateUser(userInfo *OIDCUserInfo, config *Configuration) 
 	createdUser, appErr := p.API.CreateUser(newUser)
 	if appErr != nil {
 		// Username conflict? Try appending a random suffix.
-		if appErr.StatusCode == http.StatusBadRequest {
+		if strings.Contains(appErr.Message, "username") || appErr.Id == "app.user.save.username_exists.app_error" {
 			suffix, _ := generateRandomKey(3)
 			newUser.Username = newUser.Username + "_" + suffix
 			createdUser, appErr = p.API.CreateUser(newUser)

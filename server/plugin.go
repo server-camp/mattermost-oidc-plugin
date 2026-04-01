@@ -11,7 +11,6 @@ import (
 
 	oidc "github.com/coreos/go-oidc/v3/oidc"
 	"github.com/gorilla/mux"
-	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin"
 	"golang.org/x/oauth2"
 )
@@ -152,7 +151,11 @@ func (p *Plugin) initOIDCProvider() error {
 		return fmt.Errorf("failed to discover OIDC provider at %s: %w", issuer, err)
 	}
 
-	siteURL := p.API.GetConfig().ServiceSettings.SiteURL
+	mmConfig := p.API.GetConfig()
+	if mmConfig == nil {
+		return fmt.Errorf("failed to get Mattermost config")
+	}
+	siteURL := mmConfig.ServiceSettings.SiteURL
 	if siteURL == nil || *siteURL == "" {
 		return fmt.Errorf("SiteURL is not configured in Mattermost")
 	}
@@ -238,14 +241,4 @@ func (p *Plugin) getOIDCProvider() *oidc.Provider {
 	p.configurationLock.RLock()
 	defer p.configurationLock.RUnlock()
 	return p.oidcProvider
-}
-
-// UserWillLogIn is called before a user logs in, allowing the plugin to reject the login.
-func (p *Plugin) UserWillLogIn(c *plugin.Context, user *model.User) string {
-	return ""
-}
-
-// UserHasLoggedIn is called after a successful login.
-func (p *Plugin) UserHasLoggedIn(c *plugin.Context, user *model.User) {
-	// Can be used for post-login actions like audit logging
 }

@@ -112,7 +112,7 @@
                 "key": "AutoLinkByEmail",
                 "display_name": "Auto-Link Existing Accounts by Email",
                 "type": "bool",
-                "help_text": "When enabled, existing local Mattermost accounts (without an external auth provider) will be automatically linked to OIDC on first login if the email matches. Accounts already linked to another auth service (LDAP, SAML, etc.) are never auto-linked.",
+                "help_text": "When enabled, existing Mattermost accounts will be automatically linked to OIDC on first login if the email matches. Warning: this will override any existing auth provider (LDAP, SAML, etc.) for matching accounts.",
                 "default": false
             },
             {

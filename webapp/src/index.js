@@ -101,14 +101,17 @@ class PluginClass {
                     loginForm.prepend(container);
                 }
 
-                // Render React component
-                const React = window.React || require('react');
-                const ReactDOM = window.ReactDOM || require('react-dom');
+                // Render React component (React/ReactDOM are provided as globals by Mattermost)
+                const ReactLib = window.React;
+                const ReactDOM = window.ReactDOM;
+                if (!ReactLib || !ReactDOM) {
+                    return;
+                }
                 if (ReactDOM.createRoot) {
                     const root = ReactDOM.createRoot(container);
-                    root.render(React.createElement(OIDCLoginButton));
+                    root.render(ReactLib.createElement(OIDCLoginButton));
                 } else {
-                    ReactDOM.render(React.createElement(OIDCLoginButton), container);
+                    ReactDOM.render(ReactLib.createElement(OIDCLoginButton), container);
                 }
             }
         });
