@@ -50,7 +50,8 @@
                 "type": "text",
                 "help_text": "The OAuth 2.0 Client Secret registered with your OIDC provider.",
                 "default": "",
-                "placeholder": "your-client-secret"
+                "placeholder": "your-client-secret",
+                "secret": true
             },
             {
                 "key": "Scopes",
