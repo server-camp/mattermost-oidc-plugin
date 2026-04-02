@@ -8,7 +8,7 @@ import (
 // Configuration holds the plugin's settings from the System Console.
 type Configuration struct {
 	Enable             bool   `json:"Enable"`
-	DiscoveryEndpoint  string `json:"DiscoveryEndpoint"`
+	IssuerURL          string `json:"IssuerURL"`
 	ClientID           string `json:"ClientID"`
 	ClientSecret       string `json:"ClientSecret"`
 	Scopes             string `json:"Scopes"`
@@ -30,11 +30,11 @@ func (c *Configuration) IsValid() error {
 		return nil
 	}
 
-	if c.DiscoveryEndpoint == "" {
-		return fmt.Errorf("discovery endpoint is required")
+	if c.IssuerURL == "" {
+		return fmt.Errorf("issuer URL is required")
 	}
-	if !strings.HasPrefix(c.DiscoveryEndpoint, "https://") {
-		return fmt.Errorf("discovery endpoint must use HTTPS")
+	if !strings.HasPrefix(c.IssuerURL, "https://") {
+		return fmt.Errorf("issuer URL must use HTTPS")
 	}
 	if c.ClientID == "" {
 		return fmt.Errorf("client ID is required")

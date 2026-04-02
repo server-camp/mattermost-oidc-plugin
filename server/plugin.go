@@ -144,7 +144,7 @@ func (p *Plugin) initOIDCProvider() error {
 
 	// oidc.NewProvider expects the issuer URL and appends /.well-known/openid-configuration itself.
 	// Strip the suffix if the user accidentally included it.
-	issuer := strings.TrimSuffix(config.DiscoveryEndpoint, "/.well-known/openid-configuration")
+	issuer := strings.TrimSuffix(config.IssuerURL, "/.well-known/openid-configuration")
 
 	provider, err := oidc.NewProvider(ctx, issuer)
 	if err != nil {
@@ -181,7 +181,7 @@ func (p *Plugin) initOIDCProvider() error {
 	p.configurationLock.Unlock()
 
 	p.API.LogInfo("OIDC provider initialized successfully",
-		"discovery_endpoint", config.DiscoveryEndpoint,
+		"issuer_url", config.IssuerURL,
 		"redirect_url", redirectURL,
 	)
 	return nil

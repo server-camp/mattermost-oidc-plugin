@@ -20,11 +20,11 @@ func TestConfigurationIsValid(t *testing.T) {
 		{
 			name: "valid full configuration",
 			config: Configuration{
-				Enable:            true,
-				DiscoveryEndpoint: "https://idp.example.com/.well-known/openid-configuration",
-				ClientID:          "my-client",
-				ClientSecret:      "my-secret",
-				Scopes:            "openid profile email",
+				Enable:       true,
+				IssuerURL:    "https://idp.example.com/.well-known/openid-configuration",
+				ClientID:     "my-client",
+				ClientSecret: "my-secret",
+				Scopes:       "openid profile email",
 			},
 			wantErr: false,
 		},
@@ -41,53 +41,53 @@ func TestConfigurationIsValid(t *testing.T) {
 		{
 			name: "missing client ID",
 			config: Configuration{
-				Enable:            true,
-				DiscoveryEndpoint: "https://idp.example.com/.well-known/openid-configuration",
-				ClientSecret:      "my-secret",
-				Scopes:            "openid profile email",
+				Enable:       true,
+				IssuerURL:    "https://idp.example.com/.well-known/openid-configuration",
+				ClientSecret: "my-secret",
+				Scopes:       "openid profile email",
 			},
 			wantErr: true,
 		},
 		{
 			name: "missing client secret",
 			config: Configuration{
-				Enable:            true,
-				DiscoveryEndpoint: "https://idp.example.com/.well-known/openid-configuration",
-				ClientID:          "my-client",
-				Scopes:            "openid profile email",
+				Enable:    true,
+				IssuerURL: "https://idp.example.com/.well-known/openid-configuration",
+				ClientID:  "my-client",
+				Scopes:    "openid profile email",
 			},
 			wantErr: true,
 		},
 		{
 			name: "missing openid scope",
 			config: Configuration{
-				Enable:            true,
-				DiscoveryEndpoint: "https://idp.example.com/.well-known/openid-configuration",
-				ClientID:          "my-client",
-				ClientSecret:      "my-secret",
-				Scopes:            "profile email",
+				Enable:       true,
+				IssuerURL:    "https://idp.example.com/.well-known/openid-configuration",
+				ClientID:     "my-client",
+				ClientSecret: "my-secret",
+				Scopes:       "profile email",
 			},
 			wantErr: true,
 		},
 		{
 			name: "http discovery endpoint is rejected",
 			config: Configuration{
-				Enable:            true,
-				DiscoveryEndpoint: "http://idp.example.com/.well-known/openid-configuration",
-				ClientID:          "my-client",
-				ClientSecret:      "my-secret",
-				Scopes:            "openid profile email",
+				Enable:       true,
+				IssuerURL:    "http://idp.example.com/.well-known/openid-configuration",
+				ClientID:     "my-client",
+				ClientSecret: "my-secret",
+				Scopes:       "openid profile email",
 			},
 			wantErr: true,
 		},
 		{
 			name: "only openid scope is sufficient",
 			config: Configuration{
-				Enable:            true,
-				DiscoveryEndpoint: "https://idp.example.com/.well-known/openid-configuration",
-				ClientID:          "my-client",
-				ClientSecret:      "my-secret",
-				Scopes:            "openid",
+				Enable:       true,
+				IssuerURL:    "https://idp.example.com/.well-known/openid-configuration",
+				ClientID:     "my-client",
+				ClientSecret: "my-secret",
+				Scopes:       "openid",
 			},
 			wantErr: false,
 		},
@@ -209,10 +209,10 @@ func TestSanitizeUsername(t *testing.T) {
 
 func TestConfigurationClone(t *testing.T) {
 	original := &Configuration{
-		Enable:            true,
-		DiscoveryEndpoint: "https://example.com",
-		ClientID:          "test-id",
-		ClientSecret:      "test-secret",
+		Enable:       true,
+		IssuerURL:    "https://example.com",
+		ClientID:     "test-id",
+		ClientSecret: "test-secret",
 	}
 
 	clone := original.Clone()

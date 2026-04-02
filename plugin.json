@@ -29,12 +29,12 @@
                 "default": false
             },
             {
-                "key": "DiscoveryEndpoint",
-                "display_name": "Discovery Endpoint",
+                "key": "IssuerURL",
+                "display_name": "Issuer URL",
                 "type": "text",
-                "help_text": "The OpenID Connect Discovery endpoint URL (e.g., https://idp.example.com/.well-known/openid-configuration). The plugin will auto-discover authorization, token, userinfo, and JWKS endpoints.",
+                "help_text": "The OIDC Issuer URL (e.g., https://idp.example.com/realms/myrealm). The plugin will automatically discover all endpoints via the well-known OpenID configuration.",
                 "default": "",
-                "placeholder": "https://idp.example.com/.well-known/openid-configuration"
+                "placeholder": "https://idp.example.com/realms/myrealm"
             },
             {
                 "key": "ClientID",
