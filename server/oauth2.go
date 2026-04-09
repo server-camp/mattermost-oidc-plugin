@@ -131,7 +131,9 @@ func (p *Plugin) handleOAuth2Callback(w http.ResponseWriter, r *http.Request) {
 		p.renderError(w, "Authentication session expired. Please try again.")
 		return
 	}
-	_ = p.API.KVDelete(kvKey) // Clean up the state
+	if delErr := p.API.KVDelete(kvKey); delErr != nil {
+		p.API.LogWarn("Failed to delete OAuth state from KV", "key", kvKey, "error", delErr.Error())
+	}
 
 	var state OAuthState
 	if err := json.Unmarshal(stateBytes, &state); err != nil {
@@ -154,7 +156,21 @@ func (p *Plugin) handleOAuth2Callback(w http.ResponseWriter, r *http.Request) {
 	}
 
 	oauthConfig := p.getOAuthConfig()
-	ctx := context.Background()
+	if oauthConfig == nil {
+		p.API.LogError("OIDC provider not initialized during callback")
+		p.renderError(w, "OIDC provider not initialized. Check plugin configuration.")
+		return
+	}
+
+	verifier := p.getOIDCVerifier()
+	if verifier == nil {
+		p.API.LogError("OIDC verifier not initialized during callback")
+		p.renderError(w, "OIDC provider not initialized. Check plugin configuration.")
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
 
 	token, err := oauthConfig.Exchange(ctx, code)
 	if err != nil {
@@ -171,7 +187,6 @@ func (p *Plugin) handleOAuth2Callback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	verifier := p.getOIDCVerifier()
 	idToken, err := verifier.Verify(ctx, rawIDToken)
 	if err != nil {
 		p.API.LogError("Failed to verify ID token", "error", err.Error())
@@ -261,7 +276,11 @@ func (p *Plugin) extractUserInfo(ctx context.Context, idToken *oidc.IDToken, oau
 		}
 	}
 
-	p.API.LogDebug("OIDC claims received", "claims", fmt.Sprintf("%v", claims))
+	claimKeys := make([]string, 0, len(claims))
+	for k := range claims {
+		claimKeys = append(claimKeys, k)
+	}
+	p.API.LogDebug("OIDC claims received", "claim_keys", strings.Join(claimKeys, ", "))
 
 	info := &OIDCUserInfo{
 		Subject:   idToken.Subject,
@@ -279,6 +298,10 @@ func (p *Plugin) extractUserInfo(ctx context.Context, idToken *oidc.IDToken, oau
 
 	// Sanitize username for Mattermost compatibility
 	info.Username = sanitizeUsername(info.Username)
+
+	if info.Subject == "" {
+		return nil, fmt.Errorf("OIDC subject (sub) claim is empty")
+	}
 
 	if info.Email == "" {
 		return nil, fmt.Errorf("email claim '%s' is empty or not present in the ID token", config.EmailClaim)
@@ -301,7 +324,9 @@ func (p *Plugin) getOrCreateUser(userInfo *OIDCUserInfo, config *Configuration) 
 			return p.updateUserIfChanged(user, userInfo)
 		}
 		// User was deleted — clean up stale mapping
-		_ = p.API.KVDelete(kvKey)
+		if delErr := p.API.KVDelete(kvKey); delErr != nil {
+			p.API.LogWarn("Failed to delete stale OIDC user mapping", "key", kvKey, "error", delErr.Error())
+		}
 	}
 
 	// Try to find by email and optionally link to OIDC
@@ -319,7 +344,9 @@ func (p *Plugin) getOrCreateUser(userInfo *OIDCUserInfo, config *Configuration) 
 			return nil, fmt.Errorf("failed to link user to OIDC: %s", updateErr.Error())
 		}
 		// Store OIDC subject → user ID mapping
-		_ = p.API.KVSet(kvKey, []byte(user.Id))
+		if setErr := p.API.KVSet(kvKey, []byte(user.Id)); setErr != nil {
+			p.API.LogWarn("Failed to store OIDC user mapping", "key", kvKey, "error", setErr.Error())
+		}
 		return p.updateUserIfChanged(user, userInfo)
 	}
 
@@ -356,7 +383,9 @@ func (p *Plugin) getOrCreateUser(userInfo *OIDCUserInfo, config *Configuration) 
 	p.API.LogInfo("Created new user via OIDC", "user_id", createdUser.Id, "email", createdUser.Email)
 
 	// Store OIDC subject → user ID mapping
-	_ = p.API.KVSet(kvKey, []byte(createdUser.Id))
+	if setErr := p.API.KVSet(kvKey, []byte(createdUser.Id)); setErr != nil {
+		p.API.LogWarn("Failed to store OIDC user mapping for new user", "key", kvKey, "error", setErr.Error())
+	}
 
 	// Auto-join the default team if configured
 	if config.DefaultTeam != "" {
