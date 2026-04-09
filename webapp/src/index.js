@@ -8,16 +8,25 @@ const OIDCLoginButton = () => {
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
-        fetch(`/plugins/${PLUGIN_ID}/api/v1/config`)
-            .then((res) => res.json())
+        const controller = new AbortController();
+        fetch(`/plugins/${PLUGIN_ID}/api/v1/config`, {signal: controller.signal})
+            .then((res) => {
+                if (!res.ok) {
+                    throw new Error(`HTTP ${res.status}`);
+                }
+                return res.json();
+            })
             .then((data) => {
                 setConfig(data);
                 setLoading(false);
             })
             .catch((err) => {
-                console.error('Failed to load OIDC config:', err);
-                setLoading(false);
+                if (err.name !== 'AbortError') {
+                    console.error('Failed to load OIDC config:', err);
+                    setLoading(false);
+                }
             });
+        return () => controller.abort();
     }, []);
 
     if (loading || !config || !config.enable) {
@@ -73,7 +82,7 @@ const OIDCLoginButton = () => {
 
 // Plugin registration
 class PluginClass {
-    initialize(registry, store) {
+    initialize(registry) {
         // Register the login button component on the custom login buttons slot.
         // This hook is available in Mattermost v7.8+ (webapp plugin API).
         if (registry.registerCustomLoginButtonComponent) {
@@ -105,14 +114,18 @@ class PluginClass {
                 const ReactLib = window.React;
                 const ReactDOM = window.ReactDOM;
                 if (!ReactLib || !ReactDOM) {
+                    console.warn('OIDC plugin: React/ReactDOM globals not available');
                     return;
                 }
                 if (ReactDOM.createRoot) {
-                    const root = ReactDOM.createRoot(container);
-                    root.render(ReactLib.createElement(OIDCLoginButton));
+                    this.reactRoot = ReactDOM.createRoot(container);
+                    this.reactRoot.render(ReactLib.createElement(OIDCLoginButton));
                 } else {
                     ReactDOM.render(ReactLib.createElement(OIDCLoginButton), container);
                 }
+
+                // Button injected — stop observing
+                this.observer.disconnect();
             }
         });
 
@@ -126,6 +139,12 @@ class PluginClass {
         }
         const container = document.getElementById('oidc-login-button-container');
         if (container) {
+            if (this.reactRoot) {
+                this.reactRoot.unmount();
+                this.reactRoot = null;
+            } else if (window.ReactDOM && window.ReactDOM.unmountComponentAtNode) {
+                window.ReactDOM.unmountComponentAtNode(container);
+            }
             container.remove();
         }
     }
