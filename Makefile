@@ -24,7 +24,7 @@ server:
 		arch=$$(echo $$platform | cut -d'/' -f2); \
 		echo "  Building for $$os/$$arch..."; \
 		CGO_ENABLED=$(CGO_ENABLED) GOOS=$$os GOARCH=$$arch \
-			$(GO) build $(GOFLAGS) -o dist/plugin-$$os-$$arch ./...; \
+			$(GO) build $(GOFLAGS) -trimpath -ldflags="-s -w" -o dist/plugin-$$os-$$arch ./...; \
 	done
 	@echo "Server build complete."
 
