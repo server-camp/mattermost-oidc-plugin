@@ -40,8 +40,8 @@ Mattermost restricts generic OIDC authentication to the Enterprise/Professional 
 
 ## Prerequisites
 
-- **Go** 1.22+
-- **Node.js** 16+ and npm
+- **Go** 1.25+
+- **Node.js** 22+ and npm
 - **Make**
 - Mattermost/Mostlymatter Server v9.0+
 

@@ -56,4 +56,4 @@ docker-compose -f docker-compose.dev.yml up -d
 - `github.com/coreos/go-oidc/v3` — OIDC discovery and ID token verification
 - `golang.org/x/oauth2` — OAuth2 token exchange
 - `github.com/gorilla/mux` — HTTP routing
-- Go 1.22+, Node 16+, React >=16.8 (peer)
+- Go 1.25+, Node 22+, React >=16.8 (peer)
