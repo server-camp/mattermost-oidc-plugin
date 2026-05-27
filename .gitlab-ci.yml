@@ -67,7 +67,7 @@ test:server:
 
 test:webapp:
   stage: test
-  image: node:18
+  image: node:24
   <<: *node-cache
   needs:
     - job: set-version
