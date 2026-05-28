@@ -55,7 +55,7 @@ set-version:
 
 test:server:
   stage: test
-  image: golang:1.25
+  image: golang:1.26
   <<: *go-cache
   variables:
     GOMODCACHE: ${CI_PROJECT_DIR}/server/.go/pkg/mod
@@ -102,7 +102,7 @@ lint:server:
 
 build:server:
   stage: build
-  image: golang:1.25
+  image: golang:1.26
   <<: *go-cache
   variables:
     GOMODCACHE: ${CI_PROJECT_DIR}/server/.go/pkg/mod
