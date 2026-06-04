@@ -5,7 +5,7 @@ go 1.26.3
 require (
 	github.com/coreos/go-oidc/v3 v3.18.0
 	github.com/gorilla/mux v1.8.1
-	github.com/mattermost/mattermost/server/public v0.4.1
+	github.com/mattermost/mattermost/server/public v0.4.2
 	golang.org/x/oauth2 v0.36.0
 )
 
