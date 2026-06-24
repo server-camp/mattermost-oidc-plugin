@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 
 	oidc "github.com/coreos/go-oidc/v3/oidc"
 	"github.com/gorilla/mux"
@@ -140,7 +141,8 @@ func (p *Plugin) setConfiguration(configuration *Configuration) {
 func (p *Plugin) initOIDCProvider() error {
 	config := p.getConfiguration()
 
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
 
 	// oidc.NewProvider expects the issuer URL and appends /.well-known/openid-configuration itself.
 	// Strip the suffix if the user accidentally included it.
