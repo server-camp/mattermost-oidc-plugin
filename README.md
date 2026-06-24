@@ -42,6 +42,10 @@ implementing a full OIDC flow as a plugin that works with any standards-complian
 5. Plugin exchanges the code for tokens, verifies the ID token
 6. Plugin creates/updates the Mattermost user and creates a session
 
+This covers **web and desktop** clients out of the box. For the **native mobile
+app**, an optional reverse-proxy shim ([`mobile-bridge/`](mobile-bridge/README.md))
+is required — see [Native mobile app](#native-mobile-app) below.
+
 ## Prerequisites
 
 - **Go** 1.26+
@@ -180,11 +184,15 @@ mattermost-oidc-plugin/
 │   ├── plugin.go            # Plugin struct, lifecycle, router
 │   ├── configuration.go     # Configuration type and validation
 │   └── oauth2.go            # OIDC/OAuth2 flow handlers
-└── webapp/
-    ├── package.json         # Node dependencies
-    ├── webpack.config.js    # Webpack configuration
-    └── src/
-        └── index.js         # Login button React component
+├── webapp/
+│   ├── package.json         # Node dependencies
+│   ├── webpack.config.js    # Webpack configuration
+│   └── src/
+│       └── index.js         # Login button React component
+└── mobile-bridge/           # Optional reverse-proxy shim for native mobile app
+    ├── main.go              # Shim: client-config injection + mobile_login redirect
+    ├── Dockerfile           # Container image for the shim
+    └── README.md            # Ingress wiring, env vars, test plan, troubleshooting
 ```
 
 ## Security
@@ -201,6 +209,37 @@ mattermost-oidc-plugin/
 This plugin creates sessions directly after a successful OIDC flow and does **not** evaluate Mattermost's built-in MFA. If users have Mattermost-level MFA configured, it will be bypassed when logging in via OIDC.
 
 **Recommendation:** Enforce MFA at the OIDC provider level instead (Keycloak, Authentik, Authelia, etc. all support this). This is the more robust approach — MFA is enforced for every login regardless of which client or plugin is used.
+
+## Native mobile app
+
+The plugin's login button only renders in the web and desktop clients. The
+**native Mattermost mobile app** hardcodes its SSO to the core OpenID flow: it
+shows an OpenID button only when the *client config* advertises it, and always
+posts the flow to the core endpoint `/oauth/openid/mobile_login` — neither of
+which a plugin can influence.
+
+To bridge this, the repository ships an optional reverse-proxy shim in
+[`mobile-bridge/`](mobile-bridge/README.md). Placed in front of Mattermost in your
+ingress, it intercepts exactly two paths for mobile clients and forwards
+everything else (REST, WebSocket, files, `/plugins/...`) untouched:
+
+```
+mobile app ──▶ ingress ──▶ /api/v4/config/client      → bridge (inject EnableSignUpWithOpenId=true, mobile UA only)
+                           /oauth/openid/mobile_login → bridge (302 → plugin connect with mobile_redirect)
+                           everything else            → Mattermost
+```
+
+The plugin side handles the mobile callback by handing the session token back to
+the app via its custom URL scheme (`mmauth://callback?MMAUTHTOKEN=…&MMCSRF=…`),
+mirroring Mattermost core's `mobile_login` flow. Web and desktop clients are
+completely unaffected.
+
+> ⚠️ **Licensing note:** the shim makes the native app expose a license-gated
+> OpenID capability without modifying Mattermost itself. Whether this is
+> acceptable is a licensing decision the operator owns. See the
+> [`mobile-bridge` README](mobile-bridge/README.md#-licensing-note) for setup
+> (nginx/Traefik/Caddy wiring), environment variables, a test plan, and
+> troubleshooting.
 
 ## Troubleshooting
 
