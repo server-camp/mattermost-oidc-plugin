@@ -94,8 +94,14 @@ class PluginClass {
     }
 
     injectLoginButton() {
-        // Observe DOM changes to inject the button when the login page renders
+        // Observe DOM changes to inject the button when the login page renders.
+        // Restrict to the login page: the `.signup-team__container` selector also
+        // matches the "select team" screen (/select_team), which is shown *after*
+        // a successful login, so it must not be used as an injection target there.
         this.observer = new MutationObserver(() => {
+            if (!window.location.pathname.startsWith('/login')) {
+                return;
+            }
             const loginForm = document.querySelector('.signup-team__container, .login-body-card-content');
             if (loginForm && !document.getElementById('oidc-login-button-container')) {
                 const container = document.createElement('div');
