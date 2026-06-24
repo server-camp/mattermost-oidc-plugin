@@ -179,7 +179,7 @@ jobs:
   # ====================
 
   release:
-    needs: [set-version, build-bundle]
+    needs: [set-version, test-server, build-bundle]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/')
     permissions:
