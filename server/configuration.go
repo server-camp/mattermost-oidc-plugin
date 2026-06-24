@@ -60,7 +60,7 @@ func (c *Configuration) IsValid() error {
 
 // GetScopes parses the space-separated scopes string into a slice.
 func (c *Configuration) GetScopes() []string {
-	if c.Scopes == "" {
+	if strings.TrimSpace(c.Scopes) == "" {
 		return []string{"openid", "profile", "email"}
 	}
 	parts := strings.Fields(c.Scopes)
