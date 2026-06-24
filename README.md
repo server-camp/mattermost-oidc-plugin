@@ -259,16 +259,18 @@ Updates `plugin.json` and `webapp/package.json`, commits the version bump, creat
 
 ## CI/CD
 
-The repository uses GitLab CI (`.gitlab-ci.yml`) with three stages:
+The repository uses GitHub Actions (`.github/workflows/ci.yml`):
 
-| Stage       | Jobs                                           | Description                                            |
-|-------------|------------------------------------------------|--------------------------------------------------------|
-| **test**    | `test:server`, `test:webapp`, `lint:server`    | Go tests with race detection, webapp build check, lint |
-| **build**   | `build:server`, `build:webapp`, `build:bundle` | Cross-compile, webpack build, plugin bundle (.tar.gz)  |
-| **release** | `release`                                      | GitLab release with bundle download (tags only)        |
+| Job             | Trigger          | Description                                              |
+|-----------------|------------------|----------------------------------------------------------|
+| `test-server`   | every push / PR  | Go tests with race detection and coverage                |
+| `lint-server`   | every push / PR  | golangci-lint (non-blocking)                             |
+| `build-server`  | every push / PR  | Cross-compile for linux/darwin × amd64/arm64             |
+| `build-webapp`  | every push / PR  | `npm ci && webpack` production build                     |
+| `build-bundle`  | every push / PR  | Package all artifacts into `.tar.gz`                     |
+| `release`       | `v*` tags only   | Publish GitHub Release with the bundle as release asset  |
 
-The pipeline runs automatically on every push and merge request. Releases are created for tagged commits (e.g.
-`git tag v1.0.0 && git push --tags`).
+The pipeline runs automatically on every push and pull request. To cut a release, use `make release` and push the resulting tag.
 
 ## License
 
