@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"html"
 	"net/http"
+	"net/mail"
 	"strings"
 	"time"
 
@@ -326,6 +327,9 @@ func (p *Plugin) extractUserInfo(ctx context.Context, idToken *oidc.IDToken, oau
 
 	if info.Email == "" {
 		return nil, fmt.Errorf("email claim '%s' is empty or not present in the ID token", config.EmailClaim)
+	}
+	if _, err := mail.ParseAddress(info.Email); err != nil {
+		return nil, fmt.Errorf("OIDC provider returned invalid email address: %w", err)
 	}
 
 	return info, nil
