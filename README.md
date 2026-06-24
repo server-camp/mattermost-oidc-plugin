@@ -262,3 +262,7 @@ The pipeline runs automatically on every push and merge request. Releases are cr
 ## License
 
 Apache License 2.0 — compatible with Mattermost and Mostlymatter.
+
+## Disclaimer
+
+This project is an independent community plugin and is **not affiliated with, endorsed by, or officially connected to Mattermost, Inc. or the Mostlymatter project**. "Mattermost" is a trademark of Mattermost, Inc.
