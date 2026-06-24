@@ -11,7 +11,7 @@ CGO_ENABLED ?= 0
 # Server platforms
 SERVER_PLATFORMS := linux/amd64 linux/arm64 darwin/amd64 darwin/arm64
 
-.PHONY: all server webapp bundle clean deploy test lint
+.PHONY: all server webapp bundle clean deploy test lint release
 
 all: bundle
 
@@ -71,6 +71,20 @@ lint:
 	@cd server && golangci-lint run ./...
 	@echo "Lint complete."
 
+## Tag a new release (interactive: asks for version, updates plugin.json and webapp/package.json, creates git tag)
+release:
+	@current=$$(python3 -c "import json; print(json.load(open('plugin.json'))['version'])"); \
+	echo "Current version: $$current"; \
+	read -p "New version (without v): " version; \
+	if [ -z "$$version" ]; then echo "Aborted."; exit 1; fi; \
+	echo "Tagging v$$version..."; \
+	sed -i "s/\"version\": \".*\"/\"version\": \"$$version\"/" plugin.json && echo "  Updated plugin.json"; \
+	sed -i "s/\"version\": \".*\"/\"version\": \"$$version\"/" webapp/package.json && echo "  Updated webapp/package.json"; \
+	git add plugin.json webapp/package.json; \
+	git commit -m "chore: bump version to $$version"; \
+	git tag -a "v$$version" -m "Release v$$version"; \
+	echo "Tagged v$$version — push with: git push && git push origin v$$version"
+
 ## Clean build artifacts
 clean:
 	@rm -rf dist
@@ -91,6 +105,7 @@ help:
 	@echo "  test     - Run Go tests with race detection"
 	@echo "  lint     - Run Go linting (requires golangci-lint)"
 	@echo "  deploy   - Deploy to a running Mattermost / Mostlymatter instance"
+	@echo "  release  - Tag a new release (interactive)"
 	@echo "  clean    - Remove all build artifacts"
 	@echo "  help     - Show this help"
 	@echo ""
