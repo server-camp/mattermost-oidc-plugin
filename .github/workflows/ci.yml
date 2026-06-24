@@ -191,6 +191,6 @@ jobs:
 
       - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65  # v2
         with:
-          name: "OIDC Plugin ${{ github.ref_name }}"
+          name: "${{ github.ref_name }}"
           generate_release_notes: true
           files: ${{ env.PLUGIN_ID }}-${{ needs.set-version.outputs.version }}.tar.gz
