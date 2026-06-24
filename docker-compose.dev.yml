@@ -26,8 +26,12 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-    ports:
-      - "8065:8065"
+    # No host port: Traefik owns :8065 and routes to this container internally.
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.mm.rule=PathPrefix(`/`)"
+      - "traefik.http.routers.mm.entrypoints=web"
+      - "traefik.http.services.mm.loadbalancer.server.port=8065"
     environment:
       MM_SQLSETTINGS_DRIVERNAME: postgres
       MM_SQLSETTINGS_DATASOURCE: "postgres://mattermost:mattermost@postgres:5432/mattermost?sslmode=disable&connect_timeout=10"
@@ -72,6 +76,46 @@ services:
       KC_DB_USERNAME: keycloak
       KC_DB_PASSWORD: keycloak
     command: start-dev
+
+  # Sidecar that makes the native mobile app log in via the OIDC plugin.
+  # Reached only through Traefik for the two intercepted routes; calls
+  # Mattermost directly (in-network) to fetch /api/v4/config/client.
+  mobile-bridge:
+    build:
+      context: ./mobile-bridge
+    depends_on:
+      - mattermost
+    environment:
+      LISTEN: ":8066"
+      UPSTREAM: "http://mattermost:8065"
+      PLUGIN_CONNECT_PATH: "/plugins/mattermost-oidc/oauth2/connect"
+      MOBILE_UA_MATCH: "Mattermost Mobile/"
+      # Button text/color are pulled automatically from the plugin's public config.
+      # Set OPENID_BUTTON_TEXT / OPENID_BUTTON_COLOR only to force a fixed value.
+      DEBUG: "1"
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.mmbridge.rule=Path(`/api/v4/config/client`) || Path(`/oauth/openid/mobile_login`)"
+      - "traefik.http.routers.mmbridge.entrypoints=web"
+      - "traefik.http.services.mmbridge.loadbalancer.server.port=8066"
+
+  # Ingress: owns :8065 and path-routes to mattermost / mobile-bridge.
+  traefik:
+    image: traefik:v3.7
+    depends_on:
+      - mattermost
+      - mobile-bridge
+    ports:
+      - "8065:8065"   # public Mattermost URL (SiteURL stays http://localhost:8065)
+      - "8081:8080"   # Traefik dashboard (http://localhost:8081)
+    command:
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--entrypoints.web.address=:8065"
+      - "--api.dashboard=true"
+      - "--api.insecure=true"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
 
 volumes:
   postgres_data:

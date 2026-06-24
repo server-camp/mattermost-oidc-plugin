@@ -21,3 +21,4 @@ vendor/
 
 # Environment
 .env
+/mobile-bridge/mobile-bridge

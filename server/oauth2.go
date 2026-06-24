@@ -10,6 +10,8 @@ import (
 	"html"
 	"net/http"
 	"net/mail"
+	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -28,6 +30,30 @@ type OAuthState struct {
 	Token    string `json:"token"`
 	CreateAt int64  `json:"create_at"`
 	ReturnTo string `json:"return_to"`
+	// MobileRedirect, when set, is the native app's custom URL scheme callback
+	// (e.g. mmauth://callback). Its presence switches the callback into mobile
+	// mode: instead of setting a session cookie, the token is handed back to the
+	// app via the deep link, mirroring core's /oauth/<service>/mobile_login flow.
+	MobileRedirect string `json:"mobile_redirect,omitempty"`
+}
+
+// allowedMobileSchemes are the exact custom-scheme callback URLs the native
+// Mattermost apps register for SSO deep links (mmauth:// = production app,
+// mmauthbeta:// = beta build). The native app always sends the bare callback;
+// we append the token query ourselves.
+var allowedMobileSchemes = []string{"mmauth://callback", "mmauthbeta://callback"}
+
+// isAllowedMobileScheme reports whether the redirect target is one of the known
+// app callback URLs. It matches the full base (optionally followed by a query)
+// rather than a loose prefix, so a crafted host/path such as
+// "mmauth://callback.evil.com" is rejected.
+func isAllowedMobileScheme(redirect string) bool {
+	for _, s := range allowedMobileSchemes {
+		if redirect == s || strings.HasPrefix(redirect, s+"?") {
+			return true
+		}
+	}
+	return false
 }
 
 // OIDCUserInfo holds the user information extracted from OIDC claims.
@@ -71,10 +97,20 @@ func (p *Plugin) handleOAuth2Connect(w http.ResponseWriter, r *http.Request) {
 		returnTo = "/"
 	}
 
+	// Mobile login: the native app reaches this endpoint (via the front proxy
+	// rewriting /oauth/openid/mobile_login) and passes its custom-scheme callback
+	// as mobile_redirect. Reject anything that is not a known app scheme.
+	mobileRedirect := r.URL.Query().Get("mobile_redirect")
+	if mobileRedirect != "" && !isAllowedMobileScheme(mobileRedirect) {
+		p.API.LogWarn("Rejected mobile_redirect with disallowed scheme", "redirect", mobileRedirect)
+		mobileRedirect = ""
+	}
+
 	state := OAuthState{
-		Token:    stateToken,
-		CreateAt: time.Now().UnixMilli(),
-		ReturnTo: returnTo,
+		Token:          stateToken,
+		CreateAt:       time.Now().UnixMilli(),
+		ReturnTo:       returnTo,
+		MobileRedirect: mobileRedirect,
 	}
 
 	stateBytes, err := json.Marshal(state)
@@ -232,11 +268,18 @@ func (p *Plugin) handleOAuth2Callback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Create a user session with expiry from Mattermost config
+	// Create a user session with expiry from Mattermost config.
+	// Mobile logins use the (typically longer) mobile session length.
 	mmConfig := p.API.GetConfig()
+	isMobile := state.MobileRedirect != ""
+
 	sessionLengthHours := 720 // fallback: 30 days
-	if mmConfig != nil && mmConfig.ServiceSettings.SessionLengthWebInHours != nil {
-		sessionLengthHours = *mmConfig.ServiceSettings.SessionLengthWebInHours
+	if mmConfig != nil {
+		if isMobile && mmConfig.ServiceSettings.SessionLengthMobileInHours != nil {
+			sessionLengthHours = *mmConfig.ServiceSettings.SessionLengthMobileInHours
+		} else if mmConfig.ServiceSettings.SessionLengthWebInHours != nil {
+			sessionLengthHours = *mmConfig.ServiceSettings.SessionLengthWebInHours
+		}
 	}
 
 	userAgent := r.UserAgent()
@@ -244,15 +287,28 @@ func (p *Plugin) handleOAuth2Callback(w http.ResponseWriter, r *http.Request) {
 		userAgent = userAgent[:256]
 	}
 
+	// The native app refuses to complete login unless MMCSRF is non-empty. Bearer-token
+	// (mobile) API calls are not CSRF-checked server-side, but we persist the token in
+	// session Props so Session.GetCSRF() stays consistent with what we hand the app.
+	csrfToken := model.NewId()
+
+	// IsOAuth must be false: it is reserved for sessions backed by a Mattermost
+	// OAuth-app access token. Our session has no OAuthAccessData row, so setting
+	// IsOAuth=true makes logout's RevokeSession → RevokeAccessToken fail with
+	// "could not get token" (HTTP 500). Core SSO logins also use IsOAuth=false and
+	// flag OAuth via the isOAuthUser session prop instead.
 	session, appErr := p.API.CreateSession(&model.Session{
 		UserId:        mmUser.Id,
 		Roles:         mmUser.GetRawRoles(),
-		IsOAuth:       true,
+		IsOAuth:       false,
 		ExpiresAt:     model.GetMillis() + int64(sessionLengthHours)*60*60*1000,
 		ExpiredNotify: false,
 		Props: model.StringMap{
-			"platform": "oidc_plugin",
-			"os":       userAgent,
+			"platform":                    "oidc_plugin",
+			"os":                          userAgent,
+			"csrf":                        csrfToken,
+			model.UserAuthServiceIsOAuth:  "true",
+			model.UserAuthServiceIsMobile: strconv.FormatBool(isMobile),
 		},
 	})
 	if appErr != nil {
@@ -261,7 +317,16 @@ func (p *Plugin) handleOAuth2Callback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Set the session token cookie and redirect
+	// Mobile login: hand the session token back to the native app through its custom
+	// URL scheme, mirroring core's /oauth/<service>/mobile_login (token + CSRF appended
+	// to the deep link, delivered via an HTML auto-redirect page rather than a 302 —
+	// a custom-scheme navigation must originate from within the page).
+	if isMobile {
+		p.renderMobileAuthComplete(w, state.MobileRedirect, session.Token, csrfToken)
+		return
+	}
+
+	// Web/desktop: set the session token cookie and redirect.
 	siteURL := p.getSiteURL()
 	p.setSessionCookie(w, r, session, siteURL)
 
@@ -271,6 +336,48 @@ func (p *Plugin) handleOAuth2Callback(w http.ResponseWriter, r *http.Request) {
 	}
 
 	http.Redirect(w, r, siteURL+returnTo, http.StatusFound)
+}
+
+// renderMobileAuthComplete renders an HTML page that redirects the in-app browser to the
+// native app's custom URL scheme with the session token (MMAUTHTOKEN) and CSRF token
+// (MMCSRF) attached. This mirrors Mattermost core's utils.RenderMobileAuthComplete:
+// a custom-scheme navigation has to come from within the page (meta refresh / link),
+// not an HTTP 302, for the app's ASWebAuthenticationSession to intercept it.
+func (p *Plugin) renderMobileAuthComplete(w http.ResponseWriter, redirectTo, token, csrf string) {
+	u, err := url.Parse(redirectTo)
+	if err != nil {
+		p.API.LogError("Invalid mobile redirect target", "redirect", redirectTo, "error", err.Error())
+		p.renderError(w, "Invalid mobile redirect target")
+		return
+	}
+
+	q := u.Query()
+	q.Set(model.SessionCookieToken, token) // MMAUTHTOKEN
+	q.Set(model.SessionCookieCsrf, csrf)   // MMCSRF
+	u.RawQuery = q.Encode()
+	link := u.String()
+
+	// This page carries the session token + CSRF in the deep-link URL. Prevent any
+	// caching and referrer leakage of those secrets.
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate, private")
+	w.Header().Set("Pragma", "no-cache")
+	w.Header().Set("Referrer-Policy", "no-referrer")
+	w.WriteHeader(http.StatusOK)
+	_, _ = fmt.Fprintf(w, `<!DOCTYPE html>
+<html>
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<meta http-equiv="refresh" content="0; url=%s">
+	<title>Authentication complete</title>
+</head>
+<body style="font-family: sans-serif; max-width: 600px; margin: 50px auto; text-align: center;">
+	<h2>Authentication complete</h2>
+	<p>Redirecting you back to the app&hellip;</p>
+	<p><a href="%s">Tap here if you are not redirected automatically</a></p>
+</body>
+</html>`, html.EscapeString(link), html.EscapeString(link))
 }
 
 // extractUserInfo parses the OIDC claims into an OIDCUserInfo struct.
