@@ -73,6 +73,8 @@ lint:
 
 ## Tag a new release (interactive: asks for version, updates plugin.json and webapp/package.json, creates git tag)
 release:
+	@if ! git diff --quiet || ! git diff --cached --quiet; then \
+		echo "Error: working tree is dirty. Commit or stash changes first."; exit 1; fi
 	@current=$$(python3 -c "import json; print(json.load(open('plugin.json'))['version'])"); \
 	echo "Current version: $$current"; \
 	read -p "New version (without v): " version; \
