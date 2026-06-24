@@ -478,8 +478,7 @@ func (p *Plugin) handleGetPublicConfig(w http.ResponseWriter, r *http.Request) {
 
 // signState creates an HMAC-signed state string.
 func (p *Plugin) signState(token string) string {
-	config := p.getConfiguration()
-	mac := hmac.New(sha256.New, []byte(config.EncryptionKey))
+	mac := hmac.New(sha256.New, []byte(p.getEncryptionKey()))
 	mac.Write([]byte(token))
 	signature := hex.EncodeToString(mac.Sum(nil))
 	return token + ":" + signature

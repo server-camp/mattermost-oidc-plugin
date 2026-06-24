@@ -58,9 +58,7 @@ func TestGenerateRandomKey(t *testing.T) {
 
 func TestStateSignAndVerify(t *testing.T) {
 	p := &Plugin{}
-	p.configuration = &Configuration{
-		EncryptionKey: "test-encryption-key-1234567890abcdef",
-	}
+	p.encryptionKey = "test-encryption-key-1234567890abcdef"
 
 	token := "test-state-token"
 	signed := p.signState(token)

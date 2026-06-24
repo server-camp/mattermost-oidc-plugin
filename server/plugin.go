@@ -27,6 +27,9 @@ const (
 	KVOAuthStatePrefix = "oidc_state_"
 )
 
+// kvEncryptionKey is the KV store key under which the HMAC signing key is persisted.
+const kvEncryptionKey = "_plugin_encryption_key"
+
 // Plugin implements the Mattermost plugin interface.
 type Plugin struct {
 	plugin.MattermostPlugin
@@ -36,6 +39,10 @@ type Plugin struct {
 
 	// configuration is the active plugin configuration.
 	configuration *Configuration
+
+	// encryptionKey is the HMAC key used to sign OAuth state tokens.
+	// Loaded from the KV store on activation; never exposed via config or UI.
+	encryptionKey string
 
 	// oidcProvider is the cached OIDC provider from discovery.
 	oidcProvider *oidc.Provider
@@ -52,32 +59,28 @@ type Plugin struct {
 
 // OnActivate is called when the plugin is activated.
 func (p *Plugin) OnActivate() error {
-	config := p.getConfiguration()
-
-	// Generate encryption key if not set, and persist it to the plugin config store
-	if config.EncryptionKey == "" {
+	// Load or generate the HMAC signing key from the KV store.
+	// The key is kept out of plugin config and the System Console entirely.
+	if keyBytes, err := p.API.KVGet(kvEncryptionKey); err != nil {
+		return fmt.Errorf("failed to load encryption key from KV store: %w", err)
+	} else if len(keyBytes) > 0 {
+		p.encryptionKey = string(keyBytes)
+	} else {
 		key, err := generateRandomKey(32)
 		if err != nil {
 			return fmt.Errorf("failed to generate encryption key: %w", err)
 		}
-		config.EncryptionKey = key
-		p.setConfiguration(config)
-		// Persist to plugin config so the key survives restarts and config changes.
-		// Note: SavePluginConfig triggers OnConfigurationChange, which will reload
-		// the config including the now-persisted EncryptionKey — this is expected.
-		appCfg := p.API.GetPluginConfig()
-		if appCfg != nil {
-			appCfg["EncryptionKey"] = key
-			if saveErr := p.API.SavePluginConfig(appCfg); saveErr != nil {
-				p.API.LogError("Failed to save plugin config with encryption key", "error", saveErr.Error())
-			}
+		if err := p.API.KVSet(kvEncryptionKey, []byte(key)); err != nil {
+			return fmt.Errorf("failed to persist encryption key: %w", err)
 		}
+		p.encryptionKey = key
 	}
 
 	p.initRouter()
 
-	if config.Enable {
-		if err := config.IsValid(); err != nil {
+	cfg := p.getConfiguration()
+	if cfg.Enable {
+		if err := cfg.IsValid(); err != nil {
 			p.API.LogWarn("OIDC plugin configuration is incomplete", "error", err.Error())
 			return nil // Don't fail activation, just log the issue
 		}
@@ -204,6 +207,13 @@ func (p *Plugin) initRouter() {
 
 	// API endpoints
 	p.router.HandleFunc("/api/v1/config", p.handleGetPublicConfig).Methods(http.MethodGet)
+}
+
+// getEncryptionKey returns the HMAC signing key cached from the KV store.
+func (p *Plugin) getEncryptionKey() string {
+	p.configurationLock.RLock()
+	defer p.configurationLock.RUnlock()
+	return p.encryptionKey
 }
 
 // generateRandomKey generates a random hex-encoded key of the given byte length.
