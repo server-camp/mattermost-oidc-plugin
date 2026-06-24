@@ -1,0 +1,196 @@
+name: CI/CD
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+
+env:
+  PLUGIN_ID: mattermost-oidc
+
+jobs:
+  # Determines the plugin version from the git tag (v1.2.0 -> 1.2.0)
+  # or falls back to the version in plugin.json for non-tag pipelines.
+  set-version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7
+
+      - name: Determine version
+        id: version
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+            sed -i "s/\"version\": \".*\"/\"version\": \"${VERSION}\"/" plugin.json
+            sed -i "s/\"version\": \".*\"/\"version\": \"${VERSION}\"/" webapp/package.json
+          else
+            VERSION=$(sed -n 's/.*"version": "\(.*\)".*/\1/p' plugin.json | head -1)
+          fi
+          echo "Version: ${VERSION}"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7
+        with:
+          name: versioned-config
+          path: |
+            plugin.json
+            webapp/package.json
+          retention-days: 1
+
+  # ====================
+  # Tests
+  # ====================
+
+  test-server:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7
+
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16  # v6
+        with:
+          go-version: "1.26"
+          cache-dependency-path: server/go.sum
+
+      - name: Test
+        working-directory: server
+        run: |
+          go test ./... -v -race -count=1 -coverprofile=coverage.out
+          go tool cover -func=coverage.out
+
+  lint-server:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7
+
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16  # v6
+        with:
+          go-version: "1.26"
+          cache-dependency-path: server/go.sum
+
+      - uses: golangci/golangci-lint-action@82606bf257cbaff209d206a39f5134f0cfbfd2ee  # v9
+        with:
+          working-directory: server
+
+  # ====================
+  # Build
+  # ====================
+
+  build-server:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7
+
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16  # v6
+        with:
+          go-version: "1.26"
+          cache-dependency-path: server/go.sum
+
+      - name: Build
+        working-directory: server
+        env:
+          CGO_ENABLED: "0"
+        run: |
+          for platform in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64; do
+            os=$(echo $platform | cut -d'/' -f1)
+            arch=$(echo $platform | cut -d'/' -f2)
+            echo "Building for $os/$arch..."
+            GOOS=$os GOARCH=$arch go build -mod=readonly -o dist/plugin-$os-$arch ./...
+          done
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7
+        with:
+          name: server-dist
+          path: server/dist/
+          retention-days: 1
+
+  build-webapp:
+    needs: set-version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8
+        with:
+          name: versioned-config
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e  # v6
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: webapp/package-lock.json
+
+      - name: Build
+        working-directory: webapp
+        run: |
+          npm ci
+          npm run build
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7
+        with:
+          name: webapp-dist
+          path: webapp/dist/
+          retention-days: 1
+
+  build-bundle:
+    needs: [set-version, build-server, build-webapp]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8
+        with:
+          name: versioned-config
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8
+        with:
+          name: server-dist
+          path: server/dist/
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8
+        with:
+          name: webapp-dist
+          path: webapp/dist/
+
+      - name: Create bundle
+        env:
+          PLUGIN_VERSION: ${{ needs.set-version.outputs.version }}
+        run: |
+          mkdir -p dist/${PLUGIN_ID}/server/dist
+          mkdir -p dist/${PLUGIN_ID}/webapp/dist
+          mkdir -p dist/${PLUGIN_ID}/assets
+          cp plugin.json dist/${PLUGIN_ID}/
+          cp server/dist/* dist/${PLUGIN_ID}/server/dist/
+          cp webapp/dist/main.js dist/${PLUGIN_ID}/webapp/dist/
+          if [ -d assets ]; then cp -r assets/* dist/${PLUGIN_ID}/assets/ 2>/dev/null || true; fi
+          cd dist && tar -czf ${PLUGIN_ID}-${PLUGIN_VERSION}.tar.gz ${PLUGIN_ID}
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7
+        with:
+          name: plugin-bundle
+          path: dist/${{ env.PLUGIN_ID }}-${{ needs.set-version.outputs.version }}.tar.gz
+          retention-days: 30
+
+  # ====================
+  # Release (tags only)
+  # ====================
+
+  release:
+    needs: [set-version, build-bundle]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8
+        with:
+          name: plugin-bundle
+
+      - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65  # v2
+        with:
+          name: "OIDC Plugin ${{ github.ref_name }}"
+          generate_release_notes: true
+          files: ${{ env.PLUGIN_ID }}-${{ needs.set-version.outputs.version }}.tar.gz
