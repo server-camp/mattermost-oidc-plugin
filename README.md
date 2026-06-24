@@ -246,6 +246,17 @@ make deploy
 cd webapp && npm run dev
 ```
 
+### Creating a Release
+
+```bash
+make release
+# Current version: 0.1.0
+# New version (without v): 1.0.0
+# Tagged v1.0.0 — push with: git push && git push origin v1.0.0
+```
+
+Updates `plugin.json` and `webapp/package.json`, commits the version bump, creates an annotated git tag, and prints the push command. The CI/CD pipeline then builds and publishes the release automatically.
+
 ## CI/CD
 
 The repository uses GitLab CI (`.gitlab-ci.yml`) with three stages:
