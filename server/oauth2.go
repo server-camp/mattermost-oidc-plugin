@@ -123,7 +123,9 @@ func (p *Plugin) handleOAuth2Callback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Retrieve and delete state from KV
+	// Retrieve and atomically consume state from KV.
+	// KVCompareAndDelete ensures only the first concurrent callback wins;
+	// a second request with the same state token gets deleted=false and is rejected.
 	kvKey := KVOAuthStatePrefix + stateToken
 	stateBytes, appErr := p.API.KVGet(kvKey)
 	if appErr != nil || stateBytes == nil {
@@ -131,8 +133,16 @@ func (p *Plugin) handleOAuth2Callback(w http.ResponseWriter, r *http.Request) {
 		p.renderError(w, "Authentication session expired. Please try again.")
 		return
 	}
-	if delErr := p.API.KVDelete(kvKey); delErr != nil {
-		p.API.LogWarn("Failed to delete OAuth state from KV", "key", kvKey, "error", delErr.Error())
+	deleted, delErr := p.API.KVCompareAndDelete(kvKey, stateBytes)
+	if delErr != nil {
+		p.API.LogError("Failed to consume OAuth state from KV", "key", kvKey, "error", delErr.Error())
+		p.renderError(w, "Internal error")
+		return
+	}
+	if !deleted {
+		p.API.LogWarn("OAuth state already consumed — possible replay attempt", "key", kvKey)
+		p.renderError(w, "Authentication session expired. Please try again.")
+		return
 	}
 
 	var state OAuthState
