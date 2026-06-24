@@ -220,6 +220,17 @@ func (p *Plugin) handleOAuth2Callback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if mmUser.DeleteAt > 0 {
+		p.API.LogWarn("Deactivated user attempted OIDC login", "user_id", mmUser.Id, "email", userInfo.Email)
+		p.renderError(w, "Your account has been deactivated. Contact your administrator.")
+		return
+	}
+	if mmUser.IsBot {
+		p.API.LogWarn("Bot account attempted OIDC login", "user_id", mmUser.Id, "email", userInfo.Email)
+		p.renderError(w, "Bot accounts cannot log in via OIDC.")
+		return
+	}
+
 	// Create a user session with expiry from Mattermost config
 	mmConfig := p.API.GetConfig()
 	sessionLengthHours := 720 // fallback: 30 days
