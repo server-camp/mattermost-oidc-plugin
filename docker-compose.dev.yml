@@ -35,7 +35,7 @@ services:
       MM_SERVICESETTINGS_ENABLELOCALMODE: "true"
       MM_PLUGINSETTINGS_ENABLEUPLOADS: "true"
       MM_PLUGINSETTINGS_AUTOMATICPREPACKAGEDPLUGINS: "true"
-      MM_EMAILSETTINGS_SENDEMAILENOTIFICATIONS: "false"
+      MM_EMAILSETTINGS_SENDEMAILNOTIFICATIONS: "false"
     volumes:
       - mattermost_data:/mattermost/data
       - mattermost_logs:/mattermost/logs
