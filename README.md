@@ -1,11 +1,14 @@
-# Mostlymatter OIDC Plugin
+# Mattermost / Mostlymatter OIDC Plugin
 
-A Mattermost plugin that adds **OpenID Connect (OIDC)** authentication
-for [Mostlymatter](https://framagit.org/framasoft/framateam/mostlymatter) (and standard Mattermost) — **without an Enterprise license**.
+A Mattermost / Mostlymatter plugin that adds **OpenID Connect (OIDC)** authentication
+for [Mattermost](https://mattermost.com) and [Mostlymatter](https://framagit.org/framasoft/framateam/mostlymatter)
+without Enterprise license.
 
 ## Why this plugin?
 
-Mattermost restricts generic OIDC authentication to the Enterprise/Professional editions. The free Team Edition only supports GitLab as an SSO provider. This plugin bypasses that limitation by implementing a full OIDC flow as a plugin that works with any standards-compliant OIDC provider.
+Mattermost restricts generic OIDC authentication to the Enterprise/Professional editions. The free Team Edition only
+supports GitLab as an SSO provider (and even this only in version 10). This plugin bypasses that limitation by
+implementing a full OIDC flow as a plugin that works with any standards-compliant OIDC provider.
 
 ### Supported OIDC Providers
 
@@ -23,10 +26,11 @@ Mattermost restricts generic OIDC authentication to the Enterprise/Professional 
 ## Architecture
 
 ```
-┌─────────────┐    ┌──────────────────┐    ┌──────────────┐
-│   Browser    │───▶│  Mostlymatter    │───▶│ OIDC Provider│
-│ (Login Page) │◀───│  + OIDC Plugin   │◀───│ (Keycloak…)  │
-└─────────────┘    └──────────────────┘    └──────────────┘
+┌──────────────┐    ┌──────────────────┐    ┌───────────────┐
+│   Browser    │───▶│    Mattermost    │───▶│ OIDC Provider │
+│ (Login Page) │◀───│   Mostlymatter   │◀───│  (Keycloak…)  │
+│              │    │   OIDC Plugin    │    │               │
+└──────────────┘    └──────────────────┘    └───────────────┘
 ```
 
 **Flow:**
@@ -40,7 +44,7 @@ Mattermost restricts generic OIDC authentication to the Enterprise/Professional 
 
 ## Prerequisites
 
-- **Go** 1.25+
+- **Go** 1.26+
 - **Node.js** 22+ and npm
 - **Make**
 - Mattermost/Mostlymatter Server v9.0+
@@ -50,7 +54,7 @@ Mattermost restricts generic OIDC authentication to the Enterprise/Professional 
 ```bash
 # Clone the repository
 git clone <this-repo>
-cd mostlymatter-oidc-plugin
+cd mattermost-oidc-plugin
 
 # Build the plugin (server + webapp + bundle)
 make all
@@ -82,7 +86,7 @@ make lint
 
 1. Go to **System Console → Plugin Management**
 2. Click **Upload Plugin**
-3. Select `dist/mattermost-oidc-0.1.0.tar.gz`
+3. Download the latest `.tar.gz` from the [Releases page](https://github.com/server-camp/mattermost-oidc-plugin/releases)
 4. Enable the plugin
 
 ### Method 2: CLI Deploy
@@ -99,34 +103,34 @@ make deploy
 
 Create a new OIDC application/client with your provider using the following settings:
 
-| Setting          | Value                                                                    |
-|------------------|--------------------------------------------------------------------------|
-| **Client Type**  | Confidential                                                             |
-| **Grant Type**   | Authorization Code                                                       |
+| Setting          | Value                                                              |
+|------------------|--------------------------------------------------------------------|
+| **Client Type**  | Confidential                                                       |
+| **Grant Type**   | Authorization Code                                                 |
 | **Redirect URI** | `https://chat.example.com/plugins/mattermost-oidc/oauth2/callback` |
-| **Scopes**       | `openid profile email`                                                   |
+| **Scopes**       | `openid profile email`                                             |
 
 ### 2. Configure the plugin
 
 Go to **System Console → Plugins → OIDC Authentication**:
 
-| Field                    | Description                         | Example                                                    |
-|--------------------------|-------------------------------------|------------------------------------------------------------|
-| **Enable**               | Enable the plugin                   | `true`                                                     |
-| **Discovery Endpoint**   | OIDC Discovery URL                  | `https://idp.example.com/.well-known/openid-configuration` |
-| **Client ID**            | Client ID from your provider        | `mostlymatter`                                             |
-| **Client Secret**        | Client secret from your provider    | `secret123`                                                |
-| **Scopes**               | Requested scopes                    | `openid profile email`                                     |
-| **Button Text**          | Text on the login button            | `Log in with SSO`                                          |
-| **Button Color**         | Color of the login button           | `#0058CC`                                                  |
-| **Username Claim**       | OIDC claim for username             | `preferred_username`                                       |
-| **Email Claim**          | OIDC claim for email                | `email`                                                    |
-| **Auto-Create Accounts** | Automatically create new accounts   | `true`                                                     |
-| **Default Team**         | Team slug for new users             | `main`                                                     |
+| Field                    | Description                       | Example                                                    |
+|--------------------------|-----------------------------------|------------------------------------------------------------|
+| **Enable**               | Enable the plugin                 | `true`                                                     |
+| **Discovery Endpoint**   | OIDC Discovery URL                | `https://idp.example.com/.well-known/openid-configuration` |
+| **Client ID**            | Client ID from your provider      | `mostlymatter`                                             |
+| **Client Secret**        | Client secret from your provider  | `secret123`                                                |
+| **Scopes**               | Requested scopes                  | `openid profile email`                                     |
+| **Button Text**          | Text on the login button          | `Log in with SSO`                                          |
+| **Button Color**         | Color of the login button         | `#0058CC`                                                  |
+| **Username Claim**       | OIDC claim for username           | `preferred_username`                                       |
+| **Email Claim**          | OIDC claim for email              | `email`                                                    |
+| **Auto-Create Accounts** | Automatically create new accounts | `true`                                                     |
+| **Default Team**         | Team slug for new users           | `main`                                                     |
 
 ### 3. Restart the server
 
-After saving, the Mattermost server must be restarted.
+After saving, the Mattermost / Mostlymatter server must be restarted.
 
 ## Example: Keycloak Configuration
 
@@ -164,7 +168,7 @@ After saving, the Mattermost server must be restarted.
 ## Project Structure
 
 ```
-mostlymatter-oidc-plugin/
+mattermost-oidc-plugin/
 ├── plugin.json              # Plugin manifest and settings schema
 ├── Makefile                 # Build system
 ├── README.md                # This file
@@ -198,7 +202,7 @@ mostlymatter-oidc-plugin/
 → Check the discovery endpoint, review server logs
 
 **"Authentication session expired"**
-→ Ensure that the clocks of Mattermost and the OIDC provider are synchronized
+→ Ensure that the clocks of Mattermost / Mostlymatter and the OIDC provider are synchronized
 
 **"email claim is empty"**
 → Check that the OIDC provider returns the `email` scope and that the claim name is correct
@@ -213,7 +217,7 @@ mostlymatter-oidc-plugin/
 
 ### Docker Development Environment
 
-The repository includes a `docker-compose.dev.yml` with Mattermost and Keycloak as an OIDC provider:
+The repository includes a `docker-compose.dev.yml` with Mattermost / Mostlymatter and Keycloak as an OIDC provider:
 
 ```bash
 # Start the environment
@@ -226,7 +230,8 @@ docker-compose -f docker-compose.dev.yml up -d
 docker-compose -f docker-compose.dev.yml down
 ```
 
-After starting Mattermost: create an admin account, enable plugin uploads under **System Console → Plugin Management**, then upload the built bundle.
+After starting Mattermost / Mostlymatter: create an admin account, enable plugin uploads under **System Console → Plugin
+Management**, then upload the built bundle.
 
 ### Build & Deploy
 
@@ -245,13 +250,14 @@ cd webapp && npm run dev
 
 The repository uses GitLab CI (`.gitlab-ci.yml`) with three stages:
 
-| Stage       | Jobs                                           | Description                                           |
-|-------------|-------------------------------------------------|-------------------------------------------------------|
-| **test**    | `test:server`, `test:webapp`, `lint:server`     | Go tests with race detection, webapp build check, lint |
-| **build**   | `build:server`, `build:webapp`, `build:bundle`  | Cross-compile, webpack build, plugin bundle (.tar.gz)  |
-| **release** | `release`                                       | GitLab release with bundle download (tags only)        |
+| Stage       | Jobs                                           | Description                                            |
+|-------------|------------------------------------------------|--------------------------------------------------------|
+| **test**    | `test:server`, `test:webapp`, `lint:server`    | Go tests with race detection, webapp build check, lint |
+| **build**   | `build:server`, `build:webapp`, `build:bundle` | Cross-compile, webpack build, plugin bundle (.tar.gz)  |
+| **release** | `release`                                      | GitLab release with bundle download (tags only)        |
 
-The pipeline runs automatically on every push and merge request. Releases are created for tagged commits (e.g. `git tag v1.0.0 && git push --tags`).
+The pipeline runs automatically on every push and merge request. Releases are created for tagged commits (e.g.
+`git tag v1.0.0 && git push --tags`).
 
 ## License
 
