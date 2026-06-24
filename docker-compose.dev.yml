@@ -8,7 +8,7 @@
 
 services:
   postgres:
-    image: postgres:16-alpine
+    image: postgres:17-alpine
     environment:
       POSTGRES_USER: mattermost
       POSTGRES_PASSWORD: mattermost
@@ -22,8 +22,7 @@ services:
       retries: 5
 
   mattermost:
-    image: mattermost/mattermost-enterprise-edition:latest
-    # Alternatively for Mostlymatter: build a custom image
+    image: mattermost/mattermost-team-edition:11.8.1
     depends_on:
       postgres:
         condition: service_healthy
@@ -36,6 +35,7 @@ services:
       MM_SERVICESETTINGS_ENABLELOCALMODE: "true"
       MM_PLUGINSETTINGS_ENABLEUPLOADS: "true"
       MM_PLUGINSETTINGS_AUTOMATICPREPACKAGEDPLUGINS: "true"
+      MM_EMAILSETTINGS_SENDEMAILENOTIFICATIONS: "false"
     volumes:
       - mattermost_data:/mattermost/data
       - mattermost_logs:/mattermost/logs
@@ -44,7 +44,7 @@ services:
       - mattermost_client_plugins:/mattermost/client/plugins
 
   keycloak-db:
-    image: postgres:16-alpine
+    image: postgres:17-alpine
     environment:
       POSTGRES_USER: keycloak
       POSTGRES_PASSWORD: keycloak
@@ -58,7 +58,7 @@ services:
       retries: 5
 
   keycloak:
-    image: quay.io/keycloak/keycloak:24.0
+    image: quay.io/keycloak/keycloak:26.6.3
     depends_on:
       keycloak-db:
         condition: service_healthy
