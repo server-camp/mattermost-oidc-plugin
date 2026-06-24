@@ -2,7 +2,7 @@
     "id": "mattermost-oidc",
     "name": "OIDC Authentication",
     "description": "OpenID Connect (OIDC) authentication plugin for Mostlymatter/Mattermost. Enables SSO login via any standard OIDC provider (Keycloak, Authentik, Authelia, Dex, etc.) without requiring an Enterprise license.",
-    "homepage_url": "https://tldev.de",
+    "homepage_url": "https://server.camp",
     "icon_path": "assets/oidc-icon.svg",
     "version": "0.1.0",
     "min_server_version": "9.0.0",
@@ -18,8 +18,8 @@
         "bundle_path": "webapp/dist/main.js"
     },
     "settings_schema": {
-        "header": "Configure OpenID Connect (OIDC) authentication for your Mostlymatter / Mattermost instance. This plugin enables SSO login via any standard OIDC-compliant provider.",
-        "footer": "After saving, restart Mattermost for changes to take effect. Redirect URI for your OIDC provider: `{your-mattermost-url}/plugins/mattermost-oidc/oauth2/callback`",
+        "header": "Configure OpenID Connect (OIDC) authentication for your Mattermost / Mostlymatter instance. This plugin enables SSO login via any standard OIDC-compliant provider.",
+        "footer": "After saving, restart Mattermost / Mostlymatter for changes to take effect. Redirect URI for your OIDC provider: `{your-mattermost-url}/plugins/mattermost-oidc/oauth2/callback`",
         "settings": [
             {
                 "key": "Enable",
@@ -78,7 +78,7 @@
                 "key": "UsernameClaim",
                 "display_name": "Username Claim",
                 "type": "text",
-                "help_text": "The OIDC claim to use as the Mattermost username. Common: 'preferred_username', 'sub', 'nickname'.",
+                "help_text": "The OIDC claim to use as the username. Common: 'preferred_username', 'sub', 'nickname'.",
                 "default": "preferred_username"
             },
             {
@@ -106,14 +106,14 @@
                 "key": "AutoCreateAccounts",
                 "display_name": "Auto-Create Accounts",
                 "type": "bool",
-                "help_text": "Automatically create Mattermost accounts for users who authenticate via OIDC for the first time.",
+                "help_text": "Automatically create accounts for users who authenticate via OIDC for the first time.",
                 "default": true
             },
             {
                 "key": "AutoLinkByEmail",
                 "display_name": "Auto-Link Existing Accounts by Email",
                 "type": "bool",
-                "help_text": "When enabled, existing Mattermost accounts will be automatically linked to OIDC on first login if the email matches. Warning: this will override any existing auth provider (LDAP, SAML, etc.) for matching accounts.",
+                "help_text": "When enabled, existing accounts will be automatically linked to OIDC on first login if the email matches. Warning: this will override any existing auth provider (LDAP, SAML, etc.) for matching accounts.",
                 "default": false
             },
             {

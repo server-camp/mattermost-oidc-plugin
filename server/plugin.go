@@ -86,13 +86,13 @@ func (p *Plugin) OnActivate() error {
 		}
 	}
 
-	p.API.LogInfo("Mostlymatter OIDC plugin activated")
+	p.API.LogInfo("Mattermost / Mostlymatter OIDC plugin activated")
 	return nil
 }
 
 // OnDeactivate is called when the plugin is deactivated.
 func (p *Plugin) OnDeactivate() error {
-	p.API.LogInfo("Mostlymatter OIDC plugin deactivated")
+	p.API.LogInfo("Mattermost / Mostlymatter OIDC plugin deactivated")
 	return nil
 }
 

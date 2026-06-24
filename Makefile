@@ -1,4 +1,4 @@
-# Mattermost OIDC Plugin Makefile
+# Mattermost / Mostlymatter OIDC Plugin Makefile
 PLUGIN_ID  ?= mattermost-oidc
 PLUGIN_VERSION ?= $(shell python3 -c "import json; print(json.load(open('plugin.json'))['version'])")
 BUNDLE_NAME ?= $(PLUGIN_ID)-$(PLUGIN_VERSION).tar.gz
@@ -49,7 +49,7 @@ bundle: server webapp
 	@cd dist && tar -czf $(BUNDLE_NAME) $(PLUGIN_ID)
 	@echo "Plugin bundle created: dist/$(BUNDLE_NAME)"
 
-## Deploy to a running Mattermost instance (requires MM_SERVICESETTINGS_SITEURL and MM_ADMIN_TOKEN)
+## Deploy to a running Mattermost / Mostlymatter instance (requires MM_SERVICESETTINGS_SITEURL and MM_ADMIN_TOKEN)
 deploy: bundle
 	@echo "Deploying plugin..."
 	@curl -s -f \
@@ -81,7 +81,7 @@ clean:
 
 ## Print help
 help:
-	@echo "Mostlymatter OIDC Plugin Build System"
+	@echo "Mattermost / Mostlymatter OIDC Plugin Build System"
 	@echo ""
 	@echo "Targets:"
 	@echo "  all      - Build the complete plugin bundle (default)"
@@ -90,10 +90,10 @@ help:
 	@echo "  bundle   - Create the .tar.gz plugin bundle"
 	@echo "  test     - Run Go tests with race detection"
 	@echo "  lint     - Run Go linting (requires golangci-lint)"
-	@echo "  deploy   - Deploy to a running Mattermost instance"
+	@echo "  deploy   - Deploy to a running Mattermost / Mostlymatter instance"
 	@echo "  clean    - Remove all build artifacts"
 	@echo "  help     - Show this help"
 	@echo ""
 	@echo "Environment variables:"
-	@echo "  MM_SERVICESETTINGS_SITEURL - Mattermost server URL (for deploy)"
+	@echo "  MM_SERVICESETTINGS_SITEURL - Mattermost / Mostlymatter server URL (for deploy)"
 	@echo "  MM_ADMIN_TOKEN             - Admin auth token (for deploy)"
