@@ -196,6 +196,12 @@ mattermost-oidc-plugin/
 - **Secure cookies** are set when HTTPS is configured
 - **Username sanitization** prevents injection attacks
 
+### MFA
+
+This plugin creates sessions directly after a successful OIDC flow and does **not** evaluate Mattermost's built-in MFA. If users have Mattermost-level MFA configured, it will be bypassed when logging in via OIDC.
+
+**Recommendation:** Enforce MFA at the OIDC provider level instead (Keycloak, Authentik, Authelia, etc. all support this). This is the more robust approach — MFA is enforced for every login regardless of which client or plugin is used.
+
 ## Troubleshooting
 
 **"OIDC provider not initialized"**

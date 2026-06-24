@@ -19,7 +19,7 @@
     },
     "settings_schema": {
         "header": "Configure OpenID Connect (OIDC) authentication for your Mattermost / Mostlymatter instance. This plugin enables SSO login via any standard OIDC-compliant provider.",
-        "footer": "After saving, restart Mattermost / Mostlymatter for changes to take effect. Redirect URI for your OIDC provider: `{your-mattermost-url}/plugins/mattermost-oidc/oauth2/callback`",
+        "footer": "After saving, restart Mattermost / Mostlymatter for changes to take effect. Redirect URI for your OIDC provider: <your-mattermost-url>/plugins/mattermost-oidc/oauth2/callback — Note: Mattermost's built-in MFA is bypassed by OIDC login. Enforce MFA at your OIDC provider instead.",
         "settings": [
             {
                 "key": "Enable",
