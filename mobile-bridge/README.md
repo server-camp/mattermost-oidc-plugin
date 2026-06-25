@@ -9,9 +9,7 @@ built-in OpenID provider is not enabled.
 This shim spoofs the `EnableSignUpWithOpenId` client-config flag that Mattermost
 sets, if OpenID Connect ist configured, so the native app shows an OpenID
 login button and routes login through the plugin. It does **not** modify
-Mattermost itself. Whether this is acceptable is a licensing decision the
-operator owns — be aware that the end effect is using a license-gated capability
-without a license.
+Mattermost or it's enterprise-included OIDC feature itself.
 
 ## How it works
 

@@ -2,7 +2,7 @@
 
 A Mattermost / Mostlymatter plugin that adds **OpenID Connect (OIDC)** authentication
 for [Mattermost](https://mattermost.com) and [Mostlymatter](https://framagit.org/framasoft/framateam/mostlymatter)
-without Enterprise license.
+without an Enterprise license.
 
 ## Why this plugin?
 
@@ -234,12 +234,6 @@ the app via its custom URL scheme (`mmauth://callback?MMAUTHTOKEN=…&MMCSRF=…
 mirroring Mattermost core's `mobile_login` flow. Web and desktop clients are
 completely unaffected.
 
-> ⚠️ **Licensing note:** the shim makes the native app expose a license-gated
-> OpenID capability without modifying Mattermost itself. Whether this is
-> acceptable is a licensing decision the operator owns. See the
-> [`mobile-bridge` README](mobile-bridge/README.md#-licensing-note) for setup
-> (nginx/Traefik/Caddy wiring), environment variables, a test plan, and
-> troubleshooting.
 
 ## Troubleshooting
 
