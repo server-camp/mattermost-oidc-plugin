@@ -15,6 +15,7 @@ implementing a full OIDC flow as a plugin that works with any standards-complian
 - **Keycloak**
 - **Authentik**
 - **Authelia**
+- **Zitadel**
 - **Dex**
 - **LemonLDAP::NG**
 - **Okta**
