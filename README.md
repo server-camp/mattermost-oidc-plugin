@@ -119,19 +119,19 @@ Create a new OIDC application/client with your provider using the following sett
 
 Go to **System Console → Plugins → OIDC Authentication**:
 
-| Field                    | Description                       | Example                                                    |
-|--------------------------|-----------------------------------|------------------------------------------------------------|
-| **Enable**               | Enable the plugin                 | `true`                                                     |
-| **Discovery Endpoint**   | OIDC Discovery URL                | `https://idp.example.com/.well-known/openid-configuration` |
-| **Client ID**            | Client ID from your provider      | `mostlymatter`                                             |
-| **Client Secret**        | Client secret from your provider  | `secret123`                                                |
-| **Scopes**               | Requested scopes                  | `openid profile email`                                     |
-| **Button Text**          | Text on the login button          | `Log in with SSO`                                          |
-| **Button Color**         | Color of the login button         | `#0058CC`                                                  |
-| **Username Claim**       | OIDC claim for username           | `preferred_username`                                       |
-| **Email Claim**          | OIDC claim for email              | `email`                                                    |
-| **Auto-Create Accounts** | Automatically create new accounts | `true`                                                     |
-| **Default Team**         | Team slug for new users           | `main`                                                     |
+| Field                    | Description                       | Example                                               |
+|--------------------------|-----------------------------------|-------------------------------------------------------|
+| **Enable**               | Enable the plugin                 | `true`                                                |
+| **Issuer URL**           | OIDC Issuer URL                   | `https://idp.example.com/application/o/mostlymatter/` |
+| **Client ID**            | Client ID from your provider      | `mostlymatter`                                        |
+| **Client Secret**        | Client secret from your provider  | `secret123`                                           |
+| **Scopes**               | Requested scopes                  | `openid profile email`                                |
+| **Button Text**          | Text on the login button          | `Log in with SSO`                                     |
+| **Button Color**         | Color of the login button         | `#0058CC`                                             |
+| **Username Claim**       | OIDC claim for username           | `preferred_username`                                  |
+| **Email Claim**          | OIDC claim for email              | `email`                                               |
+| **Auto-Create Accounts** | Automatically create new accounts | `true`                                                |
+| **Default Team**         | Team slug for new users           | `main`                                                |
 
 ### 3. Restart the server
 
@@ -139,36 +139,29 @@ After saving, the Mattermost / Mostlymatter server must be restarted.
 
 ## Example: Keycloak Configuration
 
-```
-# In Keycloak:
-# 1. Create a new client
-#    - Client ID: mostlymatter
-#    - Client Protocol: openid-connect
-#    - Access Type: confidential
-#    - Valid Redirect URIs: https://chat.example.com/plugins/mattermost-oidc/oauth2/callback
-#
-# 2. Ensure client scopes are assigned:
-#    - openid, profile, email must be assigned
-#
-# 3. Discovery Endpoint:
-#    https://keycloak.example.com/realms/myrealm/.well-known/openid-configuration
-```
+1. Create a new client
+   - Client ID: mostlymatter
+   - Client Protocol: openid-connect
+   - Access Type: confidential
+   - Valid Redirect URIs: https://chat.example.com/plugins/mattermost-oidc/oauth2/callback
+2. Ensure client scopes are assigned:
+   - `openid`, `profile`, `email` must be assigned
+3. Discovery Endpoint:
+   https://keycloak.example.com/realms/myrealm/.well-known/openid-configuration
 
 ## Example: Authentik Configuration
 
-```
-# In Authentik:
-# 1. Create an OAuth2/OpenID Provider
-#    - Name: Mostlymatter
-#    - Authorization flow: default-provider-authorization-explicit-consent
-#    - Redirect URIs: https://chat.example.com/plugins/mattermost-oidc/oauth2/callback
-#    - Scopes: openid, profile, email
-#
-# 2. Create an application and assign the provider
-#
-# 3. Discovery Endpoint:
-#    https://sso.example.com/application/o/mostlymatter/.well-known/openid-configuration
-```
+1. Create an OAuth2/OpenID Provider
+   - Name: Mostlymatter
+   - Authorization flow: `default-provider-authorization-explicit-consent`
+   - Redirect URIs: https://chat.example.com/plugins/mattermost-oidc/oauth2/callback
+   - Scopes: `openid`, `profile`, `email`
+   - Signing key: _select a valid certificate (may be self-signed)_
+2. Create an application and assign the provider
+3. Discovery Endpoint:
+   https://sso.example.com/application/o/mostlymatter/.well-known/openid-configuration
+
+Note that Authentik doesn't have a `family_name` claim. Mattermost optimistically skips parsing the family name if not present.
 
 ## Project Structure
 
