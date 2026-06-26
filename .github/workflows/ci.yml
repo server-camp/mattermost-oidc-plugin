@@ -17,7 +17,7 @@ jobs:
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7
+      - uses: actions/checkout@v7
 
       - name: Determine version
         id: version
@@ -32,7 +32,7 @@ jobs:
           echo "Version: ${VERSION}"
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
 
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7
+      - uses: actions/upload-artifact@v7
         with:
           name: versioned-config
           path: |
@@ -47,9 +47,9 @@ jobs:
   test-server:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16  # v6
+      - uses: actions/setup-go@v6
         with:
           go-version: "1.26"
           cache-dependency-path: server/go.sum
@@ -64,14 +64,14 @@ jobs:
     runs-on: ubuntu-latest
     continue-on-error: true
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16  # v6
+      - uses: actions/setup-go@v6
         with:
           go-version: "1.26"
           cache-dependency-path: server/go.sum
 
-      - uses: golangci/golangci-lint-action@82606bf257cbaff209d206a39f5134f0cfbfd2ee  # v9
+      - uses: golangci/golangci-lint-action@v9
         with:
           working-directory: server
 
@@ -82,9 +82,9 @@ jobs:
   build-server:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16  # v6
+      - uses: actions/setup-go@v6
         with:
           go-version: "1.26"
           cache-dependency-path: server/go.sum
@@ -101,7 +101,7 @@ jobs:
             GOOS=$os GOARCH=$arch go build -mod=readonly -o dist/plugin-$os-$arch ./...
           done
 
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7
+      - uses: actions/upload-artifact@v7
         with:
           name: server-dist
           path: server/dist/
@@ -111,13 +111,13 @@ jobs:
     needs: set-version
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7
+      - uses: actions/checkout@v7
 
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8
+      - uses: actions/download-artifact@v8
         with:
           name: versioned-config
 
-      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e  # v6
+      - uses: actions/setup-node@v6
         with:
           node-version: "24"
           cache: npm
@@ -129,7 +129,7 @@ jobs:
           npm ci
           npm run build
 
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7
+      - uses: actions/upload-artifact@v7
         with:
           name: webapp-dist
           path: webapp/dist/
@@ -139,18 +139,18 @@ jobs:
     needs: [set-version, build-server, build-webapp]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7
+      - uses: actions/checkout@v7
 
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8
+      - uses: actions/download-artifact@v8
         with:
           name: versioned-config
 
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8
+      - uses: actions/download-artifact@v8
         with:
           name: server-dist
           path: server/dist/
 
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8
+      - uses: actions/download-artifact@v8
         with:
           name: webapp-dist
           path: webapp/dist/
@@ -168,7 +168,7 @@ jobs:
           if [ -d assets ]; then cp -r assets/* dist/${PLUGIN_ID}/assets/ 2>/dev/null || true; fi
           cd dist && tar -czf ${PLUGIN_ID}-${PLUGIN_VERSION}.tar.gz ${PLUGIN_ID}
 
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7
+      - uses: actions/upload-artifact@v7
         with:
           name: plugin-bundle
           path: dist/${{ env.PLUGIN_ID }}-${{ needs.set-version.outputs.version }}.tar.gz
@@ -188,15 +188,15 @@ jobs:
       contents: read
       packages: write
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7
+      - uses: actions/checkout@v7
 
-      - uses: docker/setup-qemu-action@06116385d9baf250c9f4dcb4858b16962ea869c3  # v4.1.0
+      - uses: docker/setup-qemu-action@v4
 
-      - uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5  # v4.1.0
+      - uses: docker/setup-buildx-action@v4
 
       - name: Log in to GitHub Container Registry
         if: github.event_name != 'pull_request'
-        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee  # v4.2.0
+        uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -204,7 +204,7 @@ jobs:
 
       - name: Extract image metadata
         id: meta
-        uses: docker/metadata-action@80c7e94dd9b9319bd5eb7a0e0fe9291e23a2a2e9  # v6.1.0
+        uses: docker/metadata-action@v6
         with:
           images: ghcr.io/${{ github.repository }}/mobile-bridge
           tags: |
@@ -216,7 +216,7 @@ jobs:
             latest=auto
 
       - name: Build and push
-        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf  # v7.2.0
+        uses: docker/build-push-action@v7
         with:
           context: mobile-bridge
           platforms: linux/amd64,linux/arm64
@@ -237,11 +237,11 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8
+      - uses: actions/download-artifact@v8
         with:
           name: plugin-bundle
 
-      - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65  # v2
+      - uses: softprops/action-gh-release@v3
         with:
           name: "${{ github.ref_name }}"
           generate_release_notes: true

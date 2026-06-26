@@ -1,3 +1,3 @@
-module github.com/tldev-de/mattermost-plugin-oidc/mobile-bridge
+module github.com/server-camp/mattermost-plugin-oidc/mobile-bridge
 
 go 1.26.3
