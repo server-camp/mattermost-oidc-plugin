@@ -4,7 +4,7 @@
     "description": "OpenID Connect (OIDC) authentication plugin for Mostlymatter/Mattermost. Enables SSO login via any standard OIDC provider (Keycloak, Authentik, Authelia, Dex, etc.) without requiring an Enterprise license.",
     "homepage_url": "https://server.camp",
     "icon_path": "assets/oidc-icon.svg",
-    "version": "0.2.0",
+    "version": "v0.2.0",
     "min_server_version": "9.0.0",
     "server": {
         "executables": {
