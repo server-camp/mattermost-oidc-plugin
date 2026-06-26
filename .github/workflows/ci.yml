@@ -164,6 +164,9 @@ jobs:
           mkdir -p dist/${PLUGIN_ID}/assets
           cp plugin.json dist/${PLUGIN_ID}/
           cp server/dist/* dist/${PLUGIN_ID}/server/dist/
+          # upload/download-artifact strips the executable bit; restore it so
+          # Mattermost can launch the server plugin binaries.
+          chmod +x dist/${PLUGIN_ID}/server/dist/*
           cp webapp/dist/main.js dist/${PLUGIN_ID}/webapp/dist/
           if [ -d assets ]; then cp -r assets/* dist/${PLUGIN_ID}/assets/ 2>/dev/null || true; fi
           cd dist && tar -czf ${PLUGIN_ID}-${PLUGIN_VERSION}.tar.gz ${PLUGIN_ID}
