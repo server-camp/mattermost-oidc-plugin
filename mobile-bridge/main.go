@@ -6,10 +6,11 @@
 //
 //  1. GET /api/v4/config/client
 //     For requests coming from the native app (User-Agent contains
-//     "Mattermost Mobile/"), it rewrites the JSON config to advertise the
-//     built-in OpenID provider so the app renders its native "Open ID" login
-//     button. All other clients (web, desktop) get the upstream response
-//     untouched, so they keep using the plugin's own login button.
+//     "Mattermost Mobile/") — and only when the plugin reports OIDC is enabled —
+//     it rewrites the JSON config to advertise the built-in OpenID provider so
+//     the app renders its native "Open ID" login button. All other clients (web,
+//     desktop) get the upstream response untouched, so they keep using the
+//     plugin's own login button.
 //
 //  2. GET /oauth/openid/mobile_login
 //     The native SSO flow targets this hardcoded core endpoint. The shim
@@ -24,14 +25,17 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
+	"net/http/httputil"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -70,18 +74,6 @@ func loadConfig() config {
 	}
 }
 
-// hopByHop headers must not be forwarded between connections.
-var hopByHop = map[string]bool{
-	"Connection":          true,
-	"Keep-Alive":          true,
-	"Proxy-Authenticate":  true,
-	"Proxy-Authorization": true,
-	"Te":                  true,
-	"Trailer":             true,
-	"Transfer-Encoding":   true,
-	"Upgrade":             true,
-}
-
 // pluginPublicConfig mirrors the plugin's GET /api/v1/config response.
 type pluginPublicConfig struct {
 	Enable      bool   `json:"enable"`
@@ -89,9 +81,9 @@ type pluginPublicConfig struct {
 	ButtonColor string `json:"button_color"`
 }
 
-// buttonCache caches the plugin's button text/color so it is not refetched on
-// every config request. Concurrency-safe; refreshes after ttl, and keeps the
-// last good value if a refresh fails.
+// buttonCache caches the plugin's public config (enable flag + button text/color)
+// so it is not refetched on every config request. Concurrency-safe; refreshes
+// after ttl, and keeps the last good value if a refresh fails.
 type buttonCache struct {
 	mu        sync.Mutex
 	ttl       time.Duration
@@ -155,102 +147,143 @@ func fetchPluginConfig(cfg config, client *http.Client) (pluginPublicConfig, err
 	return pc, nil
 }
 
-func main() {
-	cfg := loadConfig()
-	client := &http.Client{
-		Timeout: 30 * time.Second,
-		// Do not auto-follow redirects when proxying the config endpoint.
-		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+// matchesMobileUA reports whether the User-Agent identifies the native app.
+func matchesMobileUA(ua, match string) bool {
+	return match != "" && strings.Contains(ua, match)
+}
+
+// newHandler builds the shim's HTTP handler: a reverse proxy for the client-config
+// route (rewriting the body for mobile via ModifyResponse), the mobile_login
+// redirect, and a health check. Only these routes should reach the shim; the
+// ingress sends everything else straight to Mattermost.
+func newHandler(cfg config, client *http.Client, cache *buttonCache) http.Handler {
+	target, err := url.Parse(cfg.upstream)
+	if err != nil {
+		log.Fatalf("invalid UPSTREAM %q: %v", cfg.upstream, err)
 	}
-	cache := &buttonCache{ttl: 60 * time.Second}
+
+	// Reverse proxy for /api/v4/config/client. Using httputil.ReverseProxy gives us
+	// correct hop-by-hop header handling and streaming for free; we only intervene
+	// in Rewrite (routing + forwarding headers) and ModifyResponse (native app).
+	proxy := &httputil.ReverseProxy{
+		Rewrite: func(pr *httputil.ProxyRequest) {
+			pr.SetURL(target)  // route to upstream (also sets the Host header)
+			pr.SetXForwarded() // add X-Forwarded-For/-Host/-Proto (Rewrite omits these)
+			// Only the mobile response is buffered and rewritten, so force an
+			// uncompressed body for it. Web/desktop stream through with whatever
+			// encoding upstream negotiated.
+			if matchesMobileUA(pr.Out.Header.Get("User-Agent"), cfg.mobileUAMatch) {
+				pr.Out.Header.Set("Accept-Encoding", "identity")
+			}
+		},
+		ModifyResponse: func(resp *http.Response) error {
+			return rewriteClientConfig(cfg, client, cache, resp)
+		},
+		ErrorHandler: func(w http.ResponseWriter, _ *http.Request, err error) {
+			log.Printf("upstream error: %v", err)
+			http.Error(w, "bad gateway", http.StatusBadGateway)
+		},
+	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = io.WriteString(w, "ok")
 	})
-	mux.HandleFunc("/api/v4/config/client", func(w http.ResponseWriter, r *http.Request) {
-		handleClientConfig(cfg, client, cache, w, r)
-	})
+	mux.Handle("/api/v4/config/client", proxy)
 	mux.HandleFunc("/oauth/openid/mobile_login", func(w http.ResponseWriter, r *http.Request) {
 		handleMobileLogin(cfg, w, r)
 	})
+	return mux
+}
+
+func main() {
+	cfg := loadConfig()
+	client := &http.Client{Timeout: 30 * time.Second}
+	cache := &buttonCache{ttl: 60 * time.Second}
 
 	log.Printf("mobile-bridge listening on %s, upstream=%s, ua-match=%q", cfg.listen, cfg.upstream, cfg.mobileUAMatch)
-	if err := http.ListenAndServe(cfg.listen, mux); err != nil {
+	if err := http.ListenAndServe(cfg.listen, newHandler(cfg, client, cache)); err != nil {
 		log.Fatalf("server error: %v", err)
 	}
 }
 
-// handleClientConfig proxies GET /api/v4/config/client to upstream and, for the
-// native mobile app, flips on the OpenID login button in the returned JSON.
-func handleClientConfig(cfg config, client *http.Client, cache *buttonCache, w http.ResponseWriter, r *http.Request) {
-	upReq, err := http.NewRequestWithContext(r.Context(), http.MethodGet, cfg.upstream+r.URL.RequestURI(), nil)
-	if err != nil {
-		http.Error(w, "bad gateway", http.StatusBadGateway)
-		return
-	}
-	upReq.Header = r.Header.Clone()
-	// Force an uncompressed response so we can rewrite the JSON without juggling gzip.
-	upReq.Header.Set("Accept-Encoding", "identity")
-
-	resp, err := client.Do(upReq)
-	if err != nil {
-		log.Printf("upstream error: %v", err)
-		http.Error(w, "bad gateway", http.StatusBadGateway)
-		return
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		http.Error(w, "bad gateway", http.StatusBadGateway)
-		return
-	}
-
-	ua := r.Header.Get("User-Agent")
-	isMobile := cfg.mobileUAMatch != "" && strings.Contains(ua, cfg.mobileUAMatch)
+// rewriteClientConfig, for the native mobile app only, flips on the OpenID login
+// button in the /api/v4/config/client JSON — but only when the plugin's public
+// config reports OIDC is enabled, so the app never shows a button that dead-ends
+// at "OIDC authentication is not enabled".
+func rewriteClientConfig(cfg config, client *http.Client, cache *buttonCache, resp *http.Response) error {
+	ua := resp.Request.Header.Get("User-Agent")
+	isMobile := matchesMobileUA(ua, cfg.mobileUAMatch)
 	if cfg.debug {
 		log.Printf("config/client ua=%q mobile=%v status=%d", ua, isMobile, resp.StatusCode)
 	}
-
-	if isMobile && resp.StatusCode == http.StatusOK {
-		var m map[string]string
-		if json.Unmarshal(body, &m) == nil {
-			m["EnableSignUpWithOpenId"] = "true"
-
-			// Button text/color: explicit env vars win; otherwise pull them from
-			// the plugin's own public config so the mobile button matches web.
-			text, color := cfg.openIDButtonText, cfg.openIDButtonColor
-			if text == "" || color == "" {
-				if pc, ok := cache.get(cfg, client); ok {
-					if text == "" {
-						text = pc.ButtonText
-					}
-					if color == "" {
-						color = pc.ButtonColor
-					}
-				}
-			}
-			if text != "" {
-				m["OpenIdButtonText"] = text
-			}
-			if color != "" {
-				m["OpenIdButtonColor"] = color
-			}
-			if nb, e := json.Marshal(m); e == nil {
-				body = nb
-			}
-		} else if cfg.debug {
-			log.Printf("config/client: body was not a JSON object, passing through")
-		}
+	if !isMobile || resp.StatusCode != http.StatusOK {
+		return nil
 	}
 
-	copyHeaders(w.Header(), resp.Header)
-	w.Header().Del("Content-Encoding") // body is identity
-	w.Header().Del("Content-Length")   // length changed
-	w.WriteHeader(resp.StatusCode)
-	_, _ = w.Write(body)
+	// The plugin's public config is the single source of truth for whether the
+	// mobile button should appear and what it looks like. If it is unreachable or
+	// reports disabled, leave the config untouched — no button.
+	pc, ok := cache.get(cfg, client)
+	if !ok || !pc.Enable {
+		if cfg.debug {
+			log.Printf("config/client: plugin unreachable or disabled (ok=%v enable=%v), not advertising OpenID", ok, pc.Enable)
+		}
+		return nil
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return err
+	}
+	_ = resp.Body.Close()
+
+	var m map[string]string
+	if err := json.Unmarshal(body, &m); err != nil {
+		// Not a JSON object we understand — pass the original body through untouched.
+		if cfg.debug {
+			log.Printf("config/client: body was not a JSON object, passing through")
+		}
+		resetBody(resp, body)
+		return nil
+	}
+
+	m["EnableSignUpWithOpenId"] = "true"
+
+	// Button text/color: explicit env vars win; otherwise pull them from the
+	// plugin's own public config so the mobile button matches web.
+	text, color := cfg.openIDButtonText, cfg.openIDButtonColor
+	if text == "" {
+		text = pc.ButtonText
+	}
+	if color == "" {
+		color = pc.ButtonColor
+	}
+	if text != "" {
+		m["OpenIdButtonText"] = text
+	}
+	if color != "" {
+		m["OpenIdButtonColor"] = color
+	}
+
+	nb, err := json.Marshal(m)
+	if err != nil {
+		resetBody(resp, body)
+		return nil
+	}
+	resetBody(resp, nb)
+	return nil
+}
+
+// resetBody replaces a response body with the given bytes and fixes up the
+// framing headers. The body is always identity-encoded here (forced for mobile
+// in the Director), so any stale Content-Encoding is dropped.
+func resetBody(resp *http.Response, body []byte) {
+	resp.Body = io.NopCloser(bytes.NewReader(body))
+	resp.ContentLength = int64(len(body))
+	resp.Header.Set("Content-Length", strconv.Itoa(len(body)))
+	resp.Header.Del("Content-Encoding")
 }
 
 // handleMobileLogin turns the native app's /oauth/openid/mobile_login request
@@ -267,15 +300,4 @@ func handleMobileLogin(cfg config, w http.ResponseWriter, r *http.Request) {
 		log.Printf("mobile_login redirect_to=%q -> %s", redirectTo, loc)
 	}
 	http.Redirect(w, r, loc, http.StatusFound)
-}
-
-func copyHeaders(dst, src http.Header) {
-	for k, vv := range src {
-		if hopByHop[k] {
-			continue
-		}
-		for _, v := range vv {
-			dst.Add(k, v)
-		}
-	}
 }

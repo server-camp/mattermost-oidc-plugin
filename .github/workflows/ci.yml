@@ -60,6 +60,22 @@ jobs:
           go test ./... -v -race -count=1 -coverprofile=coverage.out
           go tool cover -func=coverage.out
 
+  test-mobile-bridge:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.26"
+          cache: false # standalone module with no external dependencies
+
+      - name: Vet & Test
+        working-directory: mobile-bridge
+        run: |
+          go vet ./...
+          go test ./... -race -count=1
+
   lint-server:
     runs-on: ubuntu-latest
     continue-on-error: true
@@ -186,6 +202,7 @@ jobs:
   # Dockerfile); on pushes to main and on tags it is pushed to the GitHub
   # Container Registry (ghcr.io/<owner>/<repo>/mobile-bridge).
   build-mobile-bridge:
+    needs: test-mobile-bridge
     runs-on: ubuntu-latest
     permissions:
       contents: read

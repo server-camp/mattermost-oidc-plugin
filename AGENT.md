@@ -42,7 +42,7 @@ docker-compose -f docker-compose.dev.yml up -d
 - `oauth2.go` — Full OAuth2 flow: state generation with HMAC-SHA256 signing, authorization redirect, callback handling, ID token verification via JWKS, user claim extraction, Mattermost user creation/linking, session cookie management. Also contains the **mobile branch**: `mobile_redirect` is read on `/oauth2/connect` and validated against `allowedMobileSchemes` (`mmauth://callback`, `mmauthbeta://callback` — exact match or `…?`-prefixed; anything else is rejected and logged). The redirect target is carried through the signed state (`MobileRedirect`); when set, the callback uses `SessionLengthMobileInHours`, marks the session with `model.UserAuthServiceIsMobile`, and instead of setting the `MMAUTHTOKEN` cookie hands the token back via `renderMobileAuthComplete` (an HTML auto-redirect page to the app's custom URL scheme with `MMAUTHTOKEN` + `MMCSRF` appended), mirroring core's `utils.RenderMobileAuthComplete`.
 - `configuration.go` — Configuration struct with validation (requires discovery endpoint, client ID/secret, "openid" scope)
 
-**Mobile bridge (Go):** `mobile-bridge/` is an optional, standalone reverse-proxy shim (separate `go.mod`, own `main.go`, `Dockerfile`, `README.md`) that enables native-app OIDC login on servers without the built-in OpenID provider. It is **not** part of the plugin bundle. It sits in the ingress and intercepts two paths: `/api/v4/config/client` (injects `EnableSignUpWithOpenId=true` for mobile UAs only, so the app shows the OpenID button) and `/oauth/openid/mobile_login` (302-redirects into the plugin's `/oauth2/connect?mobile_redirect=…`). Everything else passes through to Mattermost untouched. Button text/color default to values pulled from the plugin's public config. Configured via env vars (`UPSTREAM`, `LISTEN`, `MOBILE_UA_MATCH`, `OPENID_BUTTON_TEXT`/`COLOR`, …). See `mobile-bridge/README.md` for ingress wiring (nginx/Traefik/Caddy) and the licensing caveat. The `docker-compose.dev.yml` includes the bridge for local testing.
+**Mobile bridge (Go):** `mobile-bridge/` is an optional, standalone reverse-proxy shim (separate `go.mod`, own `main.go`, `Dockerfile`, `README.md`) that enables native-app OIDC login on servers without the built-in OpenID provider. It is **not** part of the plugin bundle. It sits in the ingress and intercepts two paths: `/api/v4/config/client` (via an `httputil.ReverseProxy` + `ModifyResponse` hook; injects `EnableSignUpWithOpenId=true` for mobile UAs only — **and only when the plugin's public config reports `enable=true`**, so the app never shows a button that dead-ends) and `/oauth/openid/mobile_login` (302-redirects into the plugin's `/oauth2/connect?mobile_redirect=…`). Everything else passes through to Mattermost untouched (web/desktop responses stream through with their original encoding). Button text/color default to values pulled from the plugin's public config (`enable`/button fields cached ~60s). Covered by `mobile-bridge/main_test.go`. Configured via env vars (`UPSTREAM`, `LISTEN`, `MOBILE_UA_MATCH`, `OPENID_BUTTON_TEXT`/`COLOR`, …). See `mobile-bridge/README.md` for ingress wiring (nginx/Traefik/Caddy) and the licensing caveat. The `docker-compose.dev.yml` includes the bridge for local testing.
 
 **Webapp (React):** Single file `webapp/src/index.js` exporting a Mattermost plugin class:
 - `OIDCLoginButton` component fetches public config from `/api/v1/config` and renders a styled login button
@@ -59,10 +59,12 @@ GitHub Actions (`.github/workflows/ci.yml`) mit folgenden Jobs:
 
 - `set-version` — Liest Version aus Git-Tag (`v1.2.0 → 1.2.0`) oder `plugin.json`
 - `test-server` — `go test ./... -race -coverprofile`
+- `test-mobile-bridge` — `go vet` + `go test -race` im `mobile-bridge`-Modul
 - `lint-server` — `golangci-lint` (non-blocking)
 - `build-server` — Cross-compile für `linux/darwin × amd64/arm64`
 - `build-webapp` — `npm ci && npm run build`
 - `build-bundle` — Packt alle Artefakte zu `.tar.gz`
+- `build-mobile-bridge` — Multi-arch Container-Image (ghcr.io), gated auf `test-mobile-bridge`
 - `release` — Erstellt GitHub Release mit Changelog (nur bei `v*`-Tags)
 
 Dependabot (`.github/dependabot.yml`) aktualisiert wöchentlich Go-Module, npm-Pakete und GitHub Actions.
