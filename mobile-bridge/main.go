@@ -239,7 +239,11 @@ func rewriteClientConfig(cfg config, client *http.Client, cache *buttonCache, re
 	}
 	_ = resp.Body.Close()
 
-	var m map[string]string
+	// Deserialize into map[string]any rather than map[string]string: Mattermost's
+	// client config is flat string values today, but decoding into `any` means a
+	// future nested field won't fail the whole unmarshal and silently drop the
+	// button injection.
+	var m map[string]any
 	if err := json.Unmarshal(body, &m); err != nil {
 		// Not a JSON object we understand — pass the original body through untouched.
 		if cfg.debug {
