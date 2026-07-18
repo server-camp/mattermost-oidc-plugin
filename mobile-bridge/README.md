@@ -148,9 +148,11 @@ chat.example.com {
 
 ## Troubleshooting
 
-- **No button in the app** → the config rewrite isn't matching. Run the shim with
-  `DEBUG=1` and watch the logged `User-Agent`; adjust `MOBILE_UA_MATCH`. Confirm
-  the ingress actually routes `/api/v4/config/client` to the shim.
+- **No button in the app** → the config rewrite isn't matching. The shim only
+  advertises the button when the plugin's public config reports `enable=true`, so
+  first confirm OIDC is **enabled** and working for web login. Then run the shim
+  with `DEBUG=1` and watch the logged `User-Agent`; adjust `MOBILE_UA_MATCH`.
+  Confirm the ingress actually routes `/api/v4/config/client` to the shim.
 - **Button appears, login fails after IdP** → check the plugin server logs.
   The app needs a non-empty `MMCSRF`; the plugin sets one. Verify the deep link
   scheme matches your app build (prod `mmauth://`, beta `mmauthbeta://`) — the
