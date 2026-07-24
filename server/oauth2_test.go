@@ -1,6 +1,8 @@
 package main
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"testing"
 )
 
@@ -87,5 +89,37 @@ func TestStateSignAndVerify(t *testing.T) {
 	_, err = p.verifyAndExtractState("noseparator")
 	if err == nil {
 		t.Error("Malformed state should fail verification")
+	}
+}
+
+func TestStateCookieMatches(t *testing.T) {
+	const token = "abc123deadbeef"
+
+	newReq := func(cookieVal *string) *http.Request {
+		r := httptest.NewRequest(http.MethodGet, "/oauth2/callback", nil)
+		if cookieVal != nil {
+			r.AddCookie(&http.Cookie{Name: oidcStateCookie, Value: *cookieVal})
+		}
+		return r
+	}
+	strp := func(s string) *string { return &s }
+
+	tests := []struct {
+		name   string
+		cookie *string // nil = no cookie set
+		want   bool
+	}{
+		{"matching cookie", strp(token), true},
+		{"missing cookie", nil, false},
+		{"empty cookie", strp(""), false},
+		{"mismatched cookie", strp("wrong-token"), false},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := stateCookieMatches(newReq(tc.cookie), token); got != tc.want {
+				t.Errorf("stateCookieMatches() = %v, want %v", got, tc.want)
+			}
+		})
 	}
 }
