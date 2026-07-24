@@ -29,13 +29,50 @@ const OIDCLoginButton = () => {
         return () => controller.abort();
     }, []);
 
+    // When the login runs in a popup window (see handleClick), the popup can't always
+    // reach back into this (opener) window — the Mattermost Desktop app and browsers
+    // with COOP sever window.opener after the cross-origin IdP round-trip. The popup
+    // therefore also broadcasts completion via a same-origin localStorage write, which
+    // fires a `storage` event here. On that signal, navigate to the logged-in app so
+    // the freshly set session cookie takes effect.
+    useEffect(() => {
+        const onStorage = (e) => {
+            if (e.key === 'mattermost_oidc_login' && e.newValue) {
+                let returnTo = new URLSearchParams(window.location.search).get('redirect_to') || '/';
+                // Only allow same-origin relative paths, mirroring the server-side
+                // validation. Without this, a crafted ?redirect_to= (e.g. //evil.com
+                // or a javascript: URI) would be navigated to on login — an open
+                // redirect / DOM-XSS, since this value is otherwise unvalidated here.
+                if (!returnTo.startsWith('/') || returnTo.startsWith('//') || returnTo.includes('\\')) {
+                    returnTo = '/';
+                }
+                window.location.assign(returnTo);
+            }
+        };
+        window.addEventListener('storage', onStorage);
+        return () => window.removeEventListener('storage', onStorage);
+    }, []);
+
     if (loading || !config || !config.enable) {
         return null;
     }
 
     const handleClick = () => {
         const returnTo = new URLSearchParams(window.location.search).get('redirect_to') || '/';
-        window.location.href = `/plugins/${PLUGIN_ID}/oauth2/connect?return_to=${encodeURIComponent(returnTo)}`;
+        const base = `/plugins/${PLUGIN_ID}/oauth2/connect?return_to=${encodeURIComponent(returnTo)}`;
+
+        // Open the flow in a popup. The Mattermost Desktop app hard-blocks the main
+        // window from navigating to the external identity provider (nothing happens on
+        // click), but renders a plugin-URL popup in a trusted, session-sharing window
+        // that *does* allow it. The `popup=1` flag makes the callback close the popup
+        // and hand control back here instead of issuing a plain redirect.
+        const popup = window.open(`${base}&popup=1`, 'oidc_login', 'width=520,height=680');
+        if (!popup) {
+            // Popup blocked (strict browser settings): fall back to full-page navigation.
+            // Without popup=1 the callback performs a normal server-side redirect — this
+            // works in a regular browser, just not inside the Desktop app.
+            window.location.href = base;
+        }
     };
 
     const buttonStyle = {
