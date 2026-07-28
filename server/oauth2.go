@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/mail"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -79,6 +80,7 @@ type OIDCUserInfo struct {
 	Username  string `json:"username"`
 	FirstName string `json:"first_name"`
 	LastName  string `json:"last_name"`
+	AdminRole string `json:"admin_role"`
 }
 
 // handleOAuth2Connect initiates the OIDC login flow by redirecting the user
@@ -527,13 +529,25 @@ func (p *Plugin) extractUserInfo(ctx context.Context, idToken *oidc.IDToken, oau
 	}
 	p.API.LogDebug("OIDC claims received", "claim_keys", strings.Join(claimKeys, ", "))
 
+        AdminRole := ""
+	if config.AdminGroup != "" {
+		p.API.LogInfo("OIDC groups claim received", "claim_keys", getOIDCGroupsClaim(claims,"groups"))
+        	claimGroups := getOIDCGroupsClaim(claims, "groups")
+        	if slices.Contains(claimGroups, config.AdminGroup) {
+			p.API.LogInfo("OIDC ", config.AdminGroup, " group found")
+			AdminRole = "system_admin system_user"
+		}
+	}
+
 	info := &OIDCUserInfo{
 		Subject:   idToken.Subject,
 		Email:     getStringClaim(claims, config.EmailClaim),
 		Username:  getStringClaim(claims, config.UsernameClaim),
 		FirstName: getStringClaim(claims, config.FirstNameClaim),
 		LastName:  getStringClaim(claims, config.LastNameClaim),
+		AdminRole: AdminRole,
 	}
+
 
 	// Fallback: use email prefix as username if no username claim found
 	if info.Username == "" && info.Email != "" {
@@ -569,7 +583,7 @@ func (p *Plugin) getOrCreateUser(userInfo *OIDCUserInfo, config *Configuration) 
 		userID := string(userIDBytes)
 		user, getErr := p.API.GetUser(userID)
 		if getErr == nil && user != nil {
-			return p.updateUserIfChanged(user, userInfo)
+			return p.updateUserIfChanged(user, userInfo, config)
 		}
 		// User was deleted — clean up stale mapping
 		if delErr := p.API.KVDelete(kvKey); delErr != nil {
@@ -595,7 +609,7 @@ func (p *Plugin) getOrCreateUser(userInfo *OIDCUserInfo, config *Configuration) 
 		if setErr := p.API.KVSet(kvKey, []byte(user.Id)); setErr != nil {
 			p.API.LogWarn("Failed to store OIDC user mapping", "key", kvKey, "error", setErr.Error())
 		}
-		return p.updateUserIfChanged(user, userInfo)
+		return p.updateUserIfChanged(user, userInfo, config)
 	}
 
 	// User doesn't exist — create if enabled
@@ -652,11 +666,26 @@ func (p *Plugin) getOrCreateUser(userInfo *OIDCUserInfo, config *Configuration) 
 		}
 	}
 
+        // Update Role
+        if config.AdminGroup != "" {
+        	p.API.LogInfo("OIDC: check if promoting is ongoing")
+		// Update Role if defined
+		if userInfo.AdminRole != "" {
+        		p.API.LogInfo("OIDC: yes, it should be admin")
+        		_, rolesErr := p.API.UpdateUserRoles(createdUser.Id, userInfo.AdminRole)
+        		if rolesErr != nil {
+                		p.API.LogError("OIDC: unable to promote to admin", "user_id", createdUser.Id, "error", rolesErr.Error())
+        		}
+        		p.API.LogInfo("OIDC: user promoted to System Admin", "user_id", createdUser.Id)
+
+		}
+        }
+
 	return createdUser, nil
 }
 
 // updateUserIfChanged updates the Mattermost user profile if OIDC claims have changed.
-func (p *Plugin) updateUserIfChanged(user *model.User, info *OIDCUserInfo) (*model.User, error) {
+func (p *Plugin) updateUserIfChanged(user *model.User, info *OIDCUserInfo, config *Configuration) (*model.User, error) {
 	changed := false
 
 	if info.Email != "" && user.Email != info.Email {
@@ -672,6 +701,20 @@ func (p *Plugin) updateUserIfChanged(user *model.User, info *OIDCUserInfo) (*mod
 		changed = true
 	}
 
+        // Update Role
+        if config.AdminGroup != "" {
+                p.API.LogInfo("OIDC: check if promoting is ongoing")
+                // Update Role if defined
+                if info.AdminRole != "" {
+                        p.API.LogInfo("OIDC: yes, it should be admin")
+                        _, rolesErr := p.API.UpdateUserRoles(user.Id, info.AdminRole)
+                        if rolesErr != nil {
+                                p.API.LogError("OIDC: unable to promote to admin", "user_id", user.Id, "error", rolesErr.Error())
+                        }
+                        p.API.LogInfo("OIDC: user promoted to System Admin", "user_id", user.Id)
+                }
+        }
+
 	if !changed {
 		return user, nil
 	}
@@ -680,6 +723,7 @@ func (p *Plugin) updateUserIfChanged(user *model.User, info *OIDCUserInfo) (*mod
 	if appErr != nil {
 		return nil, fmt.Errorf("failed to update user: %s", appErr.Error())
 	}
+
 	return updatedUser, nil
 }
 
@@ -806,6 +850,43 @@ func (p *Plugin) renderError(w http.ResponseWriter, message string) {
 </html>`, html.EscapeString(message), html.EscapeString(siteURL))
 }
 
+
+// getOIDCGroupsClaim safely extracts groups from an OIDC claims map,
+// handling both single string values and arrays of strings/interfaces.
+func getOIDCGroupsClaim(claims map[string]interface{}, key string) []string {
+	val, ok := claims[key]
+	if !ok || val == nil {
+		return nil
+	}
+
+	// 1. Edge Case OIDC: L'utente appartiene a un solo gruppo e il provider
+	// restituisce una stringa singola anziché un array.
+	if str, ok := val.(string); ok {
+		if str == "" {
+			return nil
+		}
+		return []string{str}
+	}
+
+	// 2. Caso Standard Go: Il valore è già un array di stringhe tipizzato
+	if strSlice, ok := val.([]string); ok {
+		return strSlice
+	}
+
+	// 3. Caso Standard JSON: I motori di decodifica (es. encoding/json) 
+	// leggono gli array JSON come []interface{}
+	if interfaceSlice, ok := val.([]interface{}); ok {
+		var result []string
+		for _, item := range interfaceSlice {
+			if str, ok := item.(string); ok {
+				result = append(result, str)
+			}
+		}
+		return result
+	}
+
+	return nil
+}
 // getStringClaim safely extracts a string claim from a claims map.
 func getStringClaim(claims map[string]interface{}, key string) string {
 	if val, ok := claims[key]; ok {

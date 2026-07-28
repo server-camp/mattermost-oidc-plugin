@@ -4,7 +4,7 @@
     "description": "OpenID Connect (OIDC) authentication plugin for Mostlymatter/Mattermost. Enables SSO login via any standard OIDC provider (Keycloak, Authentik, Authelia, Dex, etc.) without requiring an Enterprise license.",
     "homepage_url": "https://server.camp",
     "icon_path": "assets/oidc-icon.svg",
-    "version": "0.4.1",
+    "version": "0.4.1b",
     "min_server_version": "9.0.0",
     "server": {
         "executables": {
@@ -121,6 +121,13 @@
                 "display_name": "Default Team",
                 "type": "text",
                 "help_text": "Team name (slug) to add newly created users to. Leave blank to skip auto-joining.",
+                "default": ""
+            },
+            {
+                "key": "AdminGroup",
+                "display_name": "Admin Group",
+                "type": "text",
+                "help_text": "The name of a oidc-level defined group which members will be mattermost admins (you should enable the groups claim in your IdP). Leave blank to skip this feature.",
                 "default": ""
             }
         ]
