@@ -80,7 +80,7 @@ type OIDCUserInfo struct {
 	Username  string `json:"username"`
 	FirstName string `json:"first_name"`
 	LastName  string `json:"last_name"`
-	AdminRole string `json:"admin_role"`
+	UserRole  string `json:"user_role"`
 }
 
 // handleOAuth2Connect initiates the OIDC login flow by redirecting the user
@@ -529,13 +529,15 @@ func (p *Plugin) extractUserInfo(ctx context.Context, idToken *oidc.IDToken, oau
 	}
 	p.API.LogDebug("OIDC claims received", "claim_keys", strings.Join(claimKeys, ", "))
 
-        AdminRole := ""
+        UserRole := ""
 	if config.AdminGroup != "" {
-		p.API.LogInfo("OIDC groups claim received", "claim_keys", getOIDCGroupsClaim(claims,"groups"))
+		p.API.LogDebug("OIDC groups claim received", "claim_keys", getOIDCGroupsClaim(claims,"groups"))
         	claimGroups := getOIDCGroupsClaim(claims, "groups")
         	if slices.Contains(claimGroups, config.AdminGroup) {
-			p.API.LogInfo("OIDC ", config.AdminGroup, " group found")
-			AdminRole = "system_admin system_user"
+			p.API.LogDebug("OIDC ", config.AdminGroup, " group found")
+			UserRole = "system_admin system_user"
+		} else {
+			UserRole = "system_user"
 		}
 	}
 
@@ -545,7 +547,7 @@ func (p *Plugin) extractUserInfo(ctx context.Context, idToken *oidc.IDToken, oau
 		Username:  getStringClaim(claims, config.UsernameClaim),
 		FirstName: getStringClaim(claims, config.FirstNameClaim),
 		LastName:  getStringClaim(claims, config.LastNameClaim),
-		AdminRole: AdminRole,
+		UserRole: UserRole,
 	}
 
 
@@ -668,17 +670,11 @@ func (p *Plugin) getOrCreateUser(userInfo *OIDCUserInfo, config *Configuration) 
 
         // Update Role
         if config.AdminGroup != "" {
-        	p.API.LogInfo("OIDC: check if promoting is ongoing")
-		// Update Role if defined
-		if userInfo.AdminRole != "" {
-        		p.API.LogInfo("OIDC: yes, it should be admin")
-        		_, rolesErr := p.API.UpdateUserRoles(createdUser.Id, userInfo.AdminRole)
-        		if rolesErr != nil {
-                		p.API.LogError("OIDC: unable to promote to admin", "user_id", createdUser.Id, "error", rolesErr.Error())
-        		}
-        		p.API.LogInfo("OIDC: user promoted to System Admin", "user_id", createdUser.Id)
-
-		}
+        	_, rolesErr := p.API.UpdateUserRoles(createdUser.Id, userInfo.UserRole)
+        	if rolesErr != nil {
+                	p.API.LogError("OIDC: unable to set user role", "user_id", createdUser.Id, "error", rolesErr.Error())
+        	}
+        	p.API.LogDebug("OIDC: user role set", "user_id", createdUser.Id)
         }
 
 	return createdUser, nil
@@ -703,16 +699,11 @@ func (p *Plugin) updateUserIfChanged(user *model.User, info *OIDCUserInfo, confi
 
         // Update Role
         if config.AdminGroup != "" {
-                p.API.LogInfo("OIDC: check if promoting is ongoing")
-                // Update Role if defined
-                if info.AdminRole != "" {
-                        p.API.LogInfo("OIDC: yes, it should be admin")
-                        _, rolesErr := p.API.UpdateUserRoles(user.Id, info.AdminRole)
-                        if rolesErr != nil {
-                                p.API.LogError("OIDC: unable to promote to admin", "user_id", user.Id, "error", rolesErr.Error())
-                        }
-                        p.API.LogInfo("OIDC: user promoted to System Admin", "user_id", user.Id)
-                }
+        	_, rolesErr := p.API.UpdateUserRoles(user.Id, info.UserRole)
+        	if rolesErr != nil {
+                	p.API.LogError("OIDC: unable to set user role", "user_id", user.Id, "error", rolesErr.Error())
+        	}
+        	p.API.LogDebug("OIDC: user role set", "user_id", user.Id)
         }
 
 	if !changed {
@@ -850,7 +841,6 @@ func (p *Plugin) renderError(w http.ResponseWriter, message string) {
 </html>`, html.EscapeString(message), html.EscapeString(siteURL))
 }
 
-
 // getOIDCGroupsClaim safely extracts groups from an OIDC claims map,
 // handling both single string values and arrays of strings/interfaces.
 func getOIDCGroupsClaim(claims map[string]interface{}, key string) []string {
@@ -859,8 +849,7 @@ func getOIDCGroupsClaim(claims map[string]interface{}, key string) []string {
 		return nil
 	}
 
-	// 1. Edge Case OIDC: L'utente appartiene a un solo gruppo e il provider
-	// restituisce una stringa singola anziché un array.
+	// 1. Edge Case: only a group detected
 	if str, ok := val.(string); ok {
 		if str == "" {
 			return nil
@@ -868,13 +857,12 @@ func getOIDCGroupsClaim(claims map[string]interface{}, key string) []string {
 		return []string{str}
 	}
 
-	// 2. Caso Standard Go: Il valore è già un array di stringhe tipizzato
+	// 2. Structured Case: is a go array...
 	if strSlice, ok := val.([]string); ok {
 		return strSlice
 	}
 
-	// 3. Caso Standard JSON: I motori di decodifica (es. encoding/json) 
-	// leggono gli array JSON come []interface{}
+	// 3. Standard case JSON: normal way
 	if interfaceSlice, ok := val.([]interface{}); ok {
 		var result []string
 		for _, item := range interfaceSlice {
