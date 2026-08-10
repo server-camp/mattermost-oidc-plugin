@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/mail"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -79,6 +80,7 @@ type OIDCUserInfo struct {
 	Username  string `json:"username"`
 	FirstName string `json:"first_name"`
 	LastName  string `json:"last_name"`
+	UserRole  string `json:"user_role"`
 }
 
 // handleOAuth2Connect initiates the OIDC login flow by redirecting the user
@@ -527,12 +529,24 @@ func (p *Plugin) extractUserInfo(ctx context.Context, idToken *oidc.IDToken, oau
 	}
 	p.API.LogDebug("OIDC claims received", "claim_keys", strings.Join(claimKeys, ", "))
 
+	userRole := ""
+	if config.AdminGroup != "" {
+		claimGroups := getOIDCGroupsClaim(claims, config.AdminGroupClaim)
+		if slices.Contains(claimGroups, config.AdminGroup) {
+			p.API.LogDebug("OIDC admin group matched", "group", config.AdminGroup)
+			userRole = "system_admin system_user"
+		} else {
+			userRole = "system_user"
+		}
+	}
+
 	info := &OIDCUserInfo{
 		Subject:   idToken.Subject,
 		Email:     getStringClaim(claims, config.EmailClaim),
 		Username:  getStringClaim(claims, config.UsernameClaim),
 		FirstName: getStringClaim(claims, config.FirstNameClaim),
 		LastName:  getStringClaim(claims, config.LastNameClaim),
+		UserRole:  userRole,
 	}
 
 	// Fallback: use email prefix as username if no username claim found
@@ -569,7 +583,7 @@ func (p *Plugin) getOrCreateUser(userInfo *OIDCUserInfo, config *Configuration) 
 		userID := string(userIDBytes)
 		user, getErr := p.API.GetUser(userID)
 		if getErr == nil && user != nil {
-			return p.updateUserIfChanged(user, userInfo)
+			return p.updateUserIfChanged(user, userInfo, config)
 		}
 		// User was deleted — clean up stale mapping
 		if delErr := p.API.KVDelete(kvKey); delErr != nil {
@@ -595,7 +609,7 @@ func (p *Plugin) getOrCreateUser(userInfo *OIDCUserInfo, config *Configuration) 
 		if setErr := p.API.KVSet(kvKey, []byte(user.Id)); setErr != nil {
 			p.API.LogWarn("Failed to store OIDC user mapping", "key", kvKey, "error", setErr.Error())
 		}
-		return p.updateUserIfChanged(user, userInfo)
+		return p.updateUserIfChanged(user, userInfo, config)
 	}
 
 	// User doesn't exist — create if enabled
@@ -652,11 +666,20 @@ func (p *Plugin) getOrCreateUser(userInfo *OIDCUserInfo, config *Configuration) 
 		}
 	}
 
+	// Update Role
+	if config.AdminGroup != "" {
+		_, rolesErr := p.API.UpdateUserRoles(createdUser.Id, userInfo.UserRole)
+		if rolesErr != nil {
+			p.API.LogError("OIDC: unable to set user role", "user_id", createdUser.Id, "error", rolesErr.Error())
+		}
+		p.API.LogDebug("OIDC: user role set", "user_id", createdUser.Id)
+	}
+
 	return createdUser, nil
 }
 
 // updateUserIfChanged updates the Mattermost user profile if OIDC claims have changed.
-func (p *Plugin) updateUserIfChanged(user *model.User, info *OIDCUserInfo) (*model.User, error) {
+func (p *Plugin) updateUserIfChanged(user *model.User, info *OIDCUserInfo, config *Configuration) (*model.User, error) {
 	changed := false
 
 	if info.Email != "" && user.Email != info.Email {
@@ -672,14 +695,27 @@ func (p *Plugin) updateUserIfChanged(user *model.User, info *OIDCUserInfo) (*mod
 		changed = true
 	}
 
+	if config.AdminGroup != "" && !rolesAreEqual(user.Roles, info.UserRole) {
+		changed = true
+	}
+
 	if !changed {
 		return user, nil
 	}
 
+	// Update Role
+	_, rolesErr := p.API.UpdateUserRoles(user.Id, info.UserRole)
+	if rolesErr != nil {
+		p.API.LogError("OIDC: unable to set user role(s)", "user_id", user.Id, "error", rolesErr.Error())
+	}
+	p.API.LogDebug("OIDC: user role set", "user_id", user.Id)
+
+	// Update User
 	updatedUser, appErr := p.API.UpdateUser(user)
 	if appErr != nil {
 		return nil, fmt.Errorf("failed to update user: %s", appErr.Error())
 	}
+
 	return updatedUser, nil
 }
 
@@ -804,6 +840,66 @@ func (p *Plugin) renderError(w http.ResponseWriter, message string) {
 	<p><a href="%s/login">Back to Login</a></p>
 </body>
 </html>`, html.EscapeString(message), html.EscapeString(siteURL))
+}
+
+// Compare two roles strings ignoring order and multiple spaces if any
+func rolesAreEqual(rolesA, rolesB string) bool {
+	fieldsA := strings.Fields(rolesA)
+	fieldsB := strings.Fields(rolesB)
+
+	// different number of roles: they are different.
+	if len(fieldsA) != len(fieldsB) {
+		return false
+	}
+
+	// create a map with the lefthand roles
+	mapA := make(map[string]bool, len(fieldsA))
+	for _, role := range fieldsA {
+		mapA[role] = true
+	}
+
+	// Check for every role in righthand roles are in the map
+	for _, role := range fieldsB {
+		if !mapA[role] {
+			return false
+		}
+	}
+	return true
+}
+
+// getOIDCGroupsClaim safely extracts groups from an OIDC claims map,
+// handling both single string values and arrays of strings/interfaces.
+func getOIDCGroupsClaim(claims map[string]interface{}, key string) []string {
+	val, ok := claims[key]
+	if !ok || val == nil {
+		return nil
+	}
+
+	// 1. Edge Case: only a group detected
+	if str, ok := val.(string); ok {
+		if str == "" {
+			return nil
+		}
+		return []string{str}
+	}
+
+	// 2. Structured Case: is a go array...
+	if strSlice, ok := val.([]string); ok {
+		return strSlice
+	}
+
+	// 3. Standard case JSON: normal way
+	if interfaceSlice, ok := val.([]interface{}); ok {
+		var result []string
+		for _, item := range interfaceSlice {
+			if str, ok := item.(string); ok {
+				result = append(result, str)
+			}
+		}
+		return result
+	}
+
+	return nil
 }
 
 // getStringClaim safely extracts a string claim from a claims map.
