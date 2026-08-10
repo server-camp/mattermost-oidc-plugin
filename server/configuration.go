@@ -21,6 +21,7 @@ type Configuration struct {
 	AutoCreateAccounts bool   `json:"AutoCreateAccounts"`
 	AutoLinkByEmail    bool   `json:"AutoLinkByEmail"`
 	DefaultTeam        string `json:"DefaultTeam"`
+	AdminGroupClaim    string `json:"AdminGroupClaim"`
 	AdminGroup         string `json:"AdminGroup"`
 }
 

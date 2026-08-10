@@ -529,15 +529,15 @@ func (p *Plugin) extractUserInfo(ctx context.Context, idToken *oidc.IDToken, oau
 	}
 	p.API.LogDebug("OIDC claims received", "claim_keys", strings.Join(claimKeys, ", "))
 
-        UserRole := ""
+	userRole := ""
 	if config.AdminGroup != "" {
-		p.API.LogDebug("OIDC groups claim received", "claim_keys", getOIDCGroupsClaim(claims,"groups"))
-        	claimGroups := getOIDCGroupsClaim(claims, "groups")
-        	if slices.Contains(claimGroups, config.AdminGroup) {
-			p.API.LogDebug("OIDC ", config.AdminGroup, " group found")
-			UserRole = "system_admin system_user"
+		p.API.LogDebug("OIDC claim", config.AdminGroupClaim, "received with value:", getOIDCGroupsClaim(claims, config.AdminGroupClaim))
+		claimGroups := getOIDCGroupsClaim(claims, config.AdminGroupClaim)
+		if slices.Contains(claimGroups, config.AdminGroup) {
+			p.API.LogDebug("OIDC admin group matched", "group", config.AdminGroup)
+			userRole = "system_admin system_user"
 		} else {
-			UserRole = "system_user"
+			userRole = "system_user"
 		}
 	}
 
@@ -547,9 +547,8 @@ func (p *Plugin) extractUserInfo(ctx context.Context, idToken *oidc.IDToken, oau
 		Username:  getStringClaim(claims, config.UsernameClaim),
 		FirstName: getStringClaim(claims, config.FirstNameClaim),
 		LastName:  getStringClaim(claims, config.LastNameClaim),
-		UserRole: UserRole,
+		UserRole:  userRole,
 	}
-
 
 	// Fallback: use email prefix as username if no username claim found
 	if info.Username == "" && info.Email != "" {
@@ -668,14 +667,14 @@ func (p *Plugin) getOrCreateUser(userInfo *OIDCUserInfo, config *Configuration) 
 		}
 	}
 
-        // Update Role
-        if config.AdminGroup != "" {
-        	_, rolesErr := p.API.UpdateUserRoles(createdUser.Id, userInfo.UserRole)
-        	if rolesErr != nil {
-                	p.API.LogError("OIDC: unable to set user role", "user_id", createdUser.Id, "error", rolesErr.Error())
-        	}
-        	p.API.LogDebug("OIDC: user role set", "user_id", createdUser.Id)
-        }
+	// Update Role
+	if config.AdminGroup != "" {
+		_, rolesErr := p.API.UpdateUserRoles(createdUser.Id, userInfo.UserRole)
+		if rolesErr != nil {
+			p.API.LogError("OIDC: unable to set user role", "user_id", createdUser.Id, "error", rolesErr.Error())
+		}
+		p.API.LogDebug("OIDC: user role set", "user_id", createdUser.Id)
+	}
 
 	return createdUser, nil
 }
@@ -697,14 +696,14 @@ func (p *Plugin) updateUserIfChanged(user *model.User, info *OIDCUserInfo, confi
 		changed = true
 	}
 
-        // Update Role
-        if config.AdminGroup != "" {
-        	_, rolesErr := p.API.UpdateUserRoles(user.Id, info.UserRole)
-        	if rolesErr != nil {
-                	p.API.LogError("OIDC: unable to set user role", "user_id", user.Id, "error", rolesErr.Error())
-        	}
-        	p.API.LogDebug("OIDC: user role set", "user_id", user.Id)
-        }
+	// Update Role
+	if config.AdminGroup != "" {
+		_, rolesErr := p.API.UpdateUserRoles(user.Id, info.UserRole)
+		if rolesErr != nil {
+			p.API.LogError("OIDC: unable to set user role", "user_id", user.Id, "error", rolesErr.Error())
+		}
+		p.API.LogDebug("OIDC: user role set", "user_id", user.Id)
+	}
 
 	if !changed {
 		return user, nil
@@ -875,6 +874,7 @@ func getOIDCGroupsClaim(claims map[string]interface{}, key string) []string {
 
 	return nil
 }
+
 // getStringClaim safely extracts a string claim from a claims map.
 func getStringClaim(claims map[string]interface{}, key string) string {
 	if val, ok := claims[key]; ok {
