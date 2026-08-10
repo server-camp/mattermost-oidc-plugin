@@ -531,7 +531,6 @@ func (p *Plugin) extractUserInfo(ctx context.Context, idToken *oidc.IDToken, oau
 
 	userRole := ""
 	if config.AdminGroup != "" {
-		p.API.LogDebug("OIDC claim", config.AdminGroupClaim, "received with value:", getOIDCGroupsClaim(claims, config.AdminGroupClaim))
 		claimGroups := getOIDCGroupsClaim(claims, config.AdminGroupClaim)
 		if slices.Contains(claimGroups, config.AdminGroup) {
 			p.API.LogDebug("OIDC admin group matched", "group", config.AdminGroup)
@@ -696,19 +695,22 @@ func (p *Plugin) updateUserIfChanged(user *model.User, info *OIDCUserInfo, confi
 		changed = true
 	}
 
-	// Update Role
-	if config.AdminGroup != "" {
-		_, rolesErr := p.API.UpdateUserRoles(user.Id, info.UserRole)
-		if rolesErr != nil {
-			p.API.LogError("OIDC: unable to set user role", "user_id", user.Id, "error", rolesErr.Error())
-		}
-		p.API.LogDebug("OIDC: user role set", "user_id", user.Id)
+	if config.AdminGroup != "" && !rolesAreEqual(user.Roles, info.UserRole) {
+		changed = true
 	}
 
 	if !changed {
 		return user, nil
 	}
 
+	// Update Role
+	_, rolesErr := p.API.UpdateUserRoles(user.Id, info.UserRole)
+	if rolesErr != nil {
+		p.API.LogError("OIDC: unable to set user role(s)", "user_id", user.Id, "error", rolesErr.Error())
+	}
+	p.API.LogDebug("OIDC: user role set", "user_id", user.Id)
+
+	// Update User
 	updatedUser, appErr := p.API.UpdateUser(user)
 	if appErr != nil {
 		return nil, fmt.Errorf("failed to update user: %s", appErr.Error())
@@ -838,6 +840,31 @@ func (p *Plugin) renderError(w http.ResponseWriter, message string) {
 	<p><a href="%s/login">Back to Login</a></p>
 </body>
 </html>`, html.EscapeString(message), html.EscapeString(siteURL))
+}
+
+// Compare two roles strings ignoring order and multiple spaces if any
+func rolesAreEqual(rolesA, rolesB string) bool {
+	fieldsA := strings.Fields(rolesA)
+	fieldsB := strings.Fields(rolesB)
+
+	// different number of roles: they are different.
+	if len(fieldsA) != len(fieldsB) {
+		return false
+	}
+
+	// create a map with the lefthand roles
+	mapA := make(map[string]bool, len(fieldsA))
+	for _, role := range fieldsA {
+		mapA[role] = true
+	}
+
+	// Check for every role in righthand roles are in the map
+	for _, role := range fieldsB {
+		if !mapA[role] {
+			return false
+		}
+	}
+	return true
 }
 
 // getOIDCGroupsClaim safely extracts groups from an OIDC claims map,

@@ -128,7 +128,7 @@
                 "display_name": "Admin Group Claim",
                 "type": "text",
                 "help_text": "The OIDC claim to use for the Admin Group feature.",
-                "default": "group"
+                "default": "groups"
             },
             {
                 "key": "AdminGroup",
