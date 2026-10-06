@@ -724,6 +724,13 @@ func (p *Plugin) updateUserIfChanged(user *model.User, info *OIDCUserInfo) (*mod
 		changed = true
 	}
 
+	if p.getConfiguration().AutoLinkByEmail {
+		if info.Username != "" && user.Username != info.Username {
+			user.Username = info.Username
+			changed = true
+		}
+	}
+
 	if !changed {
 		return user, nil
 	}
