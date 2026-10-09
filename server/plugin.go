@@ -96,8 +96,10 @@ func (p *Plugin) OnActivate() error {
 			p.API.LogWarn("OIDC plugin configuration is incomplete", "error", err.Error())
 			return nil // Don't fail activation, just log the issue
 		}
-		if err := p.initOIDCProvider(); err != nil {
-			p.API.LogWarn("Failed to initialize OIDC provider", "error", err.Error())
+		if p.getOAuthConfig() == nil {
+			if err := p.initOIDCProvider(); err != nil {
+				p.API.LogWarn("Failed to initialize OIDC provider", "error", err.Error())
+			}
 		}
 	}
 
@@ -117,6 +119,16 @@ func (p *Plugin) OnConfigurationChange() error {
 	var configuration Configuration
 	if err := p.API.LoadPluginConfiguration(&configuration); err != nil {
 		return fmt.Errorf("failed to load plugin configuration: %w", err)
+	}
+
+	p.configurationLock.RLock()
+	var (
+		unchanged   = p.configuration != nil && *p.configuration == configuration
+		hasProvider = p.oauth2Config != nil
+	)
+	p.configurationLock.RUnlock()
+	if unchanged && hasProvider {
+		return nil // if settings did not change and the provider is already running, skip re-discovery.
 	}
 
 	p.setConfiguration(&configuration)
