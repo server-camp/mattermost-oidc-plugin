@@ -965,3 +965,59 @@ func TestPublicConfigEnableRequiresValidConfig(t *testing.T) {
 		t.Fatalf("unexpected button attributes in public config: %v", resp)
 	}
 }
+
+func TestOnActivateAndConfigChangeDoNotRedundantlyInitProvider(t *testing.T) {
+	var up atomic.Bool
+	var hits atomic.Int32
+	p, issuer := newDiscoveryTestPlugin(t, &up, &hits, nil)
+	up.Store(true)
+
+	validCfg := Configuration{
+		Enable:       true,
+		IssuerURL:    issuer,
+		ClientID:     "mattermost",
+		ClientSecret: "secret",
+		Scopes:       "openid",
+	}
+
+	rawAPI := p.API.(quietAPI).API
+	rawAPI.On("KVGet", kvEncryptionKey).Return([]byte("test-key"), nil)
+	rawAPI.On("LoadPluginConfiguration", mock.Anything).Run(func(args mock.Arguments) {
+		dest := args.Get(0).(*Configuration)
+		*dest = validCfg
+	}).Return(nil)
+
+	// Step 1: Mattermost calls OnConfigurationChange before OnActivate on startup.
+	if err := p.OnConfigurationChange(); err != nil {
+		t.Fatalf("first OnConfigurationChange failed: %v", err)
+	}
+	if got := hits.Load(); got != 1 {
+		t.Fatalf("discovery hits after first OnConfigurationChange = %d, want 1", got)
+	}
+
+	// Step 2: Mattermost calls OnActivate. Since provider is already initialized, hits should remain 1.
+	if err := p.OnActivate(); err != nil {
+		t.Fatalf("OnActivate failed: %v", err)
+	}
+	if got := hits.Load(); got != 1 {
+		t.Fatalf("discovery hits after OnActivate = %d, want 1 (should not re-initialize)", got)
+	}
+
+	// Step 3: Mattermost broadcasts config change (e.g. saving server settings / PluginStates).
+	// Configuration is unchanged, so hits should remain 1.
+	if err := p.OnConfigurationChange(); err != nil {
+		t.Fatalf("second OnConfigurationChange failed: %v", err)
+	}
+	if got := hits.Load(); got != 1 {
+		t.Fatalf("discovery hits after unchanged OnConfigurationChange = %d, want 1 (should not re-initialize)", got)
+	}
+
+	// Step 4: If configuration actually changes (e.g. rotated client ID), discovery should run again.
+	validCfg.ClientID = "mattermost-rotated"
+	if err := p.OnConfigurationChange(); err != nil {
+		t.Fatalf("third OnConfigurationChange failed: %v", err)
+	}
+	if got := hits.Load(); got != 2 {
+		t.Fatalf("discovery hits after changed OnConfigurationChange = %d, want 2", got)
+	}
+}
