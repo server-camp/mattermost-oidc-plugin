@@ -740,7 +740,7 @@ func (p *Plugin) handleGetPublicConfig(w http.ResponseWriter, r *http.Request) {
 	config := p.getConfiguration()
 
 	publicConfig := map[string]interface{}{
-		"enable":       config.Enable,
+		"enable":       config.Enable && config.IsValid() == nil,
 		"button_text":  config.ButtonText,
 		"button_color": config.ButtonColor,
 	}

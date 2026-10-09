@@ -107,6 +107,7 @@ func (p *Plugin) OnActivate() error {
 
 // OnDeactivate is called when the plugin is deactivated.
 func (p *Plugin) OnDeactivate() error {
+	p.clearOIDCProvider()
 	p.API.LogInfo("Mattermost / Mostlymatter OIDC plugin deactivated")
 	return nil
 }
@@ -119,6 +120,7 @@ func (p *Plugin) OnConfigurationChange() error {
 	}
 
 	p.setConfiguration(&configuration)
+	p.clearOIDCProvider() // clear old config to prevent stale, outdated config in case the newly saved one is invalid
 
 	if configuration.Enable {
 		if err := configuration.IsValid(); err != nil {
@@ -152,6 +154,16 @@ func (p *Plugin) setConfiguration(configuration *Configuration) {
 	p.configuration = configuration
 }
 
+// clearOIDCProvider resets the cached provider, OAuth2 configuration, and verifier.
+func (p *Plugin) clearOIDCProvider() {
+	p.configurationLock.Lock()
+	defer p.configurationLock.Unlock()
+
+	p.oidcProvider = nil
+	p.oauth2Config = nil
+	p.oidcVerifier = nil
+}
+
 // initOIDCProvider discovers and initializes the OIDC provider, OAuth2 config, and verifier.
 func (p *Plugin) initOIDCProvider() error {
 	config := p.getConfiguration()
@@ -165,8 +177,8 @@ func (p *Plugin) initOIDCProvider() error {
 		ctx = oidc.ClientContext(ctx, p.discoveryClient)
 	}
 
-	// oidc.NewProvider expects the issuer URL and appends /.well-known/openid-configuration itself.
-	// Strip the suffix if the user accidentally included it.
+	// oidc.NewProvider expects the issuer URL and appends /.well-known/openid-configuration itself -> strip the suffix if the user accidentally included it.
+	// Note that this will potentially result in a URL mismatch if the provider sends its URL with a trailing slash, see https://github.com/coreos/go-oidc/issues/442.
 	issuer := strings.TrimSuffix(config.IssuerURL, "/.well-known/openid-configuration")
 
 	provider, err := oidc.NewProvider(ctx, issuer)

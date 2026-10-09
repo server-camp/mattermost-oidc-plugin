@@ -733,3 +733,235 @@ func TestDiscoveryDiscardedWhenConfigurationChanges(t *testing.T) {
 		t.Fatalf("got err=%v, provider set=%t; want the stale discovery discarded", err, p.getOAuthConfig() != nil)
 	}
 }
+
+func TestOnConfigurationChangeDiscardsOldProviderOnInvalidConfig(t *testing.T) {
+	var up atomic.Bool
+	var hits atomic.Int32
+	p, issuer := newDiscoveryTestPlugin(t, &up, &hits, nil)
+	up.Store(true)
+
+	// Successfully initialize provider with valid config.
+	if err := p.initOIDCProvider(); err != nil {
+		t.Fatalf("failed to initialize provider: %v", err)
+	}
+	if p.getOAuthConfig() == nil {
+		t.Fatal("expected oauthConfig to be set")
+	}
+
+	// Mock LoadPluginConfiguration to return an invalid config (missing ClientSecret).
+	invalidCfg := &Configuration{
+		Enable:       true,
+		IssuerURL:    issuer,
+		ClientID:     "mattermost",
+		ClientSecret: "", // invalid
+		Scopes:       "openid",
+	}
+	rawAPI := p.API.(quietAPI).API
+	rawAPI.On("LoadPluginConfiguration", mock.Anything).Run(func(args mock.Arguments) {
+		dest := args.Get(0).(*Configuration)
+		*dest = *invalidCfg
+	}).Return(nil)
+
+	if err := p.OnConfigurationChange(); err != nil {
+		t.Fatalf("OnConfigurationChange returned unexpected error: %v", err)
+	}
+
+	// Provider state must be completely cleared.
+	if p.getOAuthConfig() != nil || p.getOIDCProvider() != nil || p.getOIDCVerifier() != nil {
+		t.Fatal("expected provider state to be discarded after invalid configuration change")
+	}
+
+	// Login attempt must fail fast with 500, not redirect to the old provider.
+	rec := httptest.NewRecorder()
+	p.handleOAuth2Connect(rec, httptest.NewRequest(http.MethodGet, "/oauth2/connect", nil))
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("got status %d, want 500", rec.Code)
+	}
+}
+
+func TestOnConfigurationChangeDiscardsOldProviderOnFailedDiscovery(t *testing.T) {
+	var up atomic.Bool
+	var hits atomic.Int32
+	p, _ := newDiscoveryTestPlugin(t, &up, &hits, nil)
+	up.Store(true)
+
+	// Successfully initialize provider with initial config.
+	if err := p.initOIDCProvider(); err != nil {
+		t.Fatalf("failed to initialize provider: %v", err)
+	}
+	if p.getOAuthConfig() == nil {
+		t.Fatal("expected oauthConfig to be set")
+	}
+
+	// Create a new IdP that is currently down.
+	var newHits atomic.Int32
+	var newUp atomic.Bool
+	var newIssuer string
+	newIdp := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		newHits.Add(1)
+		if !newUp.Load() {
+			http.Error(w, "down", http.StatusServiceUnavailable)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]string{
+			"issuer":                 newIssuer,
+			"authorization_endpoint": newIssuer + "/auth",
+			"token_endpoint":         newIssuer + "/token",
+			"jwks_uri":               newIssuer + "/certs",
+		})
+	}))
+	t.Cleanup(newIdp.Close)
+	newIssuer = newIdp.URL
+
+	// Point discovery client to handle the new TLS server.
+	p.discoveryClient = newIdp.Client()
+
+	newCfg := &Configuration{
+		Enable:       true,
+		IssuerURL:    newIssuer,
+		ClientID:     "mattermost",
+		ClientSecret: "secret",
+		Scopes:       "openid",
+	}
+	rawAPI := p.API.(quietAPI).API
+	rawAPI.On("LoadPluginConfiguration", mock.Anything).Run(func(args mock.Arguments) {
+		dest := args.Get(0).(*Configuration)
+		*dest = *newCfg
+	}).Return(nil)
+
+	// Discovery should fail because newIdp is down.
+	if err := p.OnConfigurationChange(); err != nil {
+		t.Fatalf("OnConfigurationChange returned unexpected error: %v", err)
+	}
+
+	// Old provider must be discarded!
+	if p.getOAuthConfig() != nil {
+		t.Fatal("expected old oauthConfig to be discarded when new discovery fails")
+	}
+
+	// Now bring newIdp up and test that login retry discovers the NEW issuer, not the old one.
+	newUp.Store(true)
+	rec := httptest.NewRecorder()
+	p.handleOAuth2Connect(rec, httptest.NewRequest(http.MethodGet, "/oauth2/connect", nil))
+	if rec.Code != http.StatusFound || !strings.HasPrefix(rec.Header().Get("Location"), newIssuer+"/auth?") {
+		t.Fatalf("got %d to %q, want redirect to new issuer %s", rec.Code, rec.Header().Get("Location"), newIssuer)
+	}
+}
+
+func TestOnConfigurationChangeDiscardsOldProviderOnDisable(t *testing.T) {
+	var up atomic.Bool
+	var hits atomic.Int32
+	p, issuer := newDiscoveryTestPlugin(t, &up, &hits, nil)
+	up.Store(true)
+
+	if err := p.initOIDCProvider(); err != nil {
+		t.Fatalf("failed to initialize provider: %v", err)
+	}
+	if p.getOAuthConfig() == nil {
+		t.Fatal("expected oauthConfig to be set")
+	}
+
+	disabledCfg := &Configuration{
+		Enable:       false,
+		IssuerURL:    issuer,
+		ClientID:     "mattermost",
+		ClientSecret: "secret",
+		Scopes:       "openid",
+	}
+	rawAPI := p.API.(quietAPI).API
+	rawAPI.On("LoadPluginConfiguration", mock.Anything).Run(func(args mock.Arguments) {
+		dest := args.Get(0).(*Configuration)
+		*dest = *disabledCfg
+	}).Return(nil)
+
+	if err := p.OnConfigurationChange(); err != nil {
+		t.Fatalf("OnConfigurationChange returned unexpected error: %v", err)
+	}
+
+	if p.getOAuthConfig() != nil {
+		t.Fatal("expected oauthConfig to be nil after disabling plugin")
+	}
+
+	rec := httptest.NewRecorder()
+	p.handleOAuth2Connect(rec, httptest.NewRequest(http.MethodGet, "/oauth2/connect", nil))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("got status %d, want 400 Bad Request", rec.Code)
+	}
+}
+
+func TestOnDeactivateDiscardsProvider(t *testing.T) {
+	var up atomic.Bool
+	var hits atomic.Int32
+	p, _ := newDiscoveryTestPlugin(t, &up, &hits, nil)
+	up.Store(true)
+
+	if err := p.initOIDCProvider(); err != nil {
+		t.Fatalf("failed to initialize provider: %v", err)
+	}
+	if p.getOAuthConfig() == nil {
+		t.Fatal("expected oauthConfig to be set")
+	}
+
+	if err := p.OnDeactivate(); err != nil {
+		t.Fatalf("OnDeactivate returned unexpected error: %v", err)
+	}
+
+	if p.getOAuthConfig() != nil || p.getOIDCProvider() != nil || p.getOIDCVerifier() != nil {
+		t.Fatal("expected provider state to be nil after deactivation")
+	}
+}
+
+func TestPublicConfigEnableRequiresValidConfig(t *testing.T) {
+	p := &Plugin{}
+
+	// Case 1: Disabled
+	p.setConfiguration(&Configuration{
+		Enable: false,
+	})
+	rec := httptest.NewRecorder()
+	p.handleGetPublicConfig(rec, httptest.NewRequest(http.MethodGet, "/api/v1/config", nil))
+	var resp map[string]interface{}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to unmarshal response: %v", err)
+	}
+	if resp["enable"] != false {
+		t.Fatalf("expected enable=false when disabled, got %v", resp["enable"])
+	}
+
+	// Case 2: Enabled but invalid (missing ClientSecret, IssuerURL not https)
+	p.setConfiguration(&Configuration{
+		Enable:    true,
+		IssuerURL: "http://not-https.com",
+		ClientID:  "client",
+	})
+	rec = httptest.NewRecorder()
+	p.handleGetPublicConfig(rec, httptest.NewRequest(http.MethodGet, "/api/v1/config", nil))
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to unmarshal response: %v", err)
+	}
+	if resp["enable"] != false {
+		t.Fatalf("expected enable=false when config is invalid, got %v", resp["enable"])
+	}
+
+	// Case 3: Enabled and valid
+	p.setConfiguration(&Configuration{
+		Enable:       true,
+		IssuerURL:    "https://idp.example.com",
+		ClientID:     "client",
+		ClientSecret: "secret",
+		Scopes:       "openid",
+		ButtonText:   "SSO Login",
+		ButtonColor:  "#123456",
+	})
+	rec = httptest.NewRecorder()
+	p.handleGetPublicConfig(rec, httptest.NewRequest(http.MethodGet, "/api/v1/config", nil))
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to unmarshal response: %v", err)
+	}
+	if resp["enable"] != true {
+		t.Fatalf("expected enable=true when config is valid, got %v", resp["enable"])
+	}
+	if resp["button_text"] != "SSO Login" || resp["button_color"] != "#123456" {
+		t.Fatalf("unexpected button attributes in public config: %v", resp)
+	}
+}
