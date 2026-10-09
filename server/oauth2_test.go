@@ -633,8 +633,10 @@ func (quietAPI) LogError(string, ...any) {}
 
 // newDiscoveryTestPlugin returns a plugin whose issuer answers discovery only while up is true; onRequest may be nil.
 func newDiscoveryTestPlugin(t *testing.T, up *atomic.Bool, hits *atomic.Int32, onRequest func()) (*Plugin, string) {
-	t.Helper()
 	var issuer string
+
+	t.Helper()
+
 	idp := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		hits.Add(1)
 		if onRequest != nil {
@@ -653,15 +655,12 @@ func newDiscoveryTestPlugin(t *testing.T, up *atomic.Bool, hits *atomic.Int32, o
 	}))
 	t.Cleanup(idp.Close)
 	issuer = idp.URL
-	// go-oidc falls back to http.DefaultClient, which must trust the test issuer's certificate.
-	defaultClient := http.DefaultClient
-	http.DefaultClient = idp.Client()
-	t.Cleanup(func() { http.DefaultClient = defaultClient })
 
 	api := &plugintest.API{}
 	api.On("GetConfig").Return(&model.Config{ServiceSettings: model.ServiceSettings{SiteURL: model.NewPointer("https://mm.example.com")}})
 	api.On("KVSetWithExpiry", mock.Anything, mock.Anything, mock.Anything).Return(nil)
-	p := &Plugin{encryptionKey: "test-key"}
+
+	p := &Plugin{encryptionKey: "test-key", discoveryClient: idp.Client()}
 	p.SetAPI(quietAPI{api})
 	p.setConfiguration(&Configuration{Enable: true, IssuerURL: issuer, ClientID: "mattermost", ClientSecret: "secret", Scopes: "openid"})
 	return p, issuer

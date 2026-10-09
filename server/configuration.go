@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 )
 
@@ -46,13 +47,7 @@ func (c *Configuration) IsValid() error {
 	}
 
 	scopes := c.GetScopes()
-	hasOpenID := false
-	for _, s := range scopes {
-		if s == "openid" {
-			hasOpenID = true
-			break
-		}
-	}
+	hasOpenID := slices.Contains(scopes, "openid")
 	if !hasOpenID {
 		return fmt.Errorf("scopes must include 'openid'")
 	}

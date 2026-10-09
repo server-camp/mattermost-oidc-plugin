@@ -89,8 +89,7 @@ type OIDCUserInfo struct {
 	EmailVerified *bool  `json:"email_verified,omitempty"`
 }
 
-// handleOAuth2Connect initiates the OIDC login flow by redirecting the user
-// to the identity provider's authorization endpoint.
+// handleOAuth2Connect initiates the OIDC login flow by redirecting the user to the identity provider's authorization endpoint.
 func (p *Plugin) handleOAuth2Connect(w http.ResponseWriter, r *http.Request) {
 	config := p.getConfiguration()
 	if !config.Enable {

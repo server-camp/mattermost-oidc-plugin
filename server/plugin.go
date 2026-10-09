@@ -62,6 +62,9 @@ type Plugin struct {
 	// lastDiscoveryRetry is when a login request last retried discovery, guarded by retryLock.
 	lastDiscoveryRetry time.Time
 
+	// discoveryClient overrides the HTTP client used for OIDC discovery when set (currently only used by tests).
+	discoveryClient *http.Client
+
 	// router handles HTTP requests for this plugin.
 	router *mux.Router
 }
@@ -158,6 +161,9 @@ func (p *Plugin) initOIDCProvider() error {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
+	if p.discoveryClient != nil {
+		ctx = oidc.ClientContext(ctx, p.discoveryClient)
+	}
 
 	// oidc.NewProvider expects the issuer URL and appends /.well-known/openid-configuration itself.
 	// Strip the suffix if the user accidentally included it.
@@ -221,10 +227,10 @@ func (p *Plugin) retryOIDCProvider() {
 	if p.getOAuthConfig() != nil || time.Since(p.lastDiscoveryRetry) < discoveryRetryInterval {
 		return
 	}
-	p.lastDiscoveryRetry = time.Now()
 	if err := p.initOIDCProvider(); err != nil {
 		p.API.LogWarn("Failed to initialize OIDC provider on login", "error", err.Error())
 	}
+	p.lastDiscoveryRetry = time.Now()
 }
 
 // ServeHTTP routes incoming HTTP requests to the plugin's router.
