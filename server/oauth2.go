@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html"
 	"net/http"
@@ -32,7 +33,12 @@ const (
 	// feed the callback to a victim, silently logging the victim into the attacker's
 	// account (login CSRF). The mobile deep-link flow is exempt (see the callback).
 	oidcStateCookie = "MMOIDCSTATE"
+
+	// usernameExistsAppErrorID is the error ID returned by Mattermost when trying to save a user with an existing username.
+	usernameExistsAppErrorID = "app.user.save.username_exists.app_error"
 )
+
+var errUsernameConflict = errors.New("OIDC username conflicts with an existing Mattermost account")
 
 // OAuthState represents the state parameter stored in KV during the OAuth flow.
 type OAuthState struct {
@@ -337,6 +343,10 @@ func (p *Plugin) handleOAuth2Callback(w http.ResponseWriter, r *http.Request) {
 	mmUser, err := p.getOrCreateUser(userInfo, config)
 	if err != nil {
 		p.API.LogError("Failed to get or create user", "error", err.Error(), "email", userInfo.Email)
+		if errors.Is(err, errUsernameConflict) {
+			p.renderError(w, "The username from your identity provider is already in use in Mattermost. Please contact your administrator.")
+			return
+		}
 		p.renderError(w, "Failed to create or update your account. Contact your administrator.")
 		return
 	}
@@ -702,6 +712,7 @@ func (p *Plugin) getOrCreateUser(userInfo *OIDCUserInfo, config *Configuration) 
 // updateUserIfChanged updates the Mattermost user profile if OIDC claims have changed.
 func (p *Plugin) updateUserIfChanged(user *model.User, info *OIDCUserInfo) (*model.User, error) {
 	changed := false
+	usernameChanged := false
 
 	if info.Email != "" && user.Email != info.Email {
 		user.Email = info.Email
@@ -728,6 +739,7 @@ func (p *Plugin) updateUserIfChanged(user *model.User, info *OIDCUserInfo) (*mod
 		if info.Username != "" && user.Username != info.Username {
 			user.Username = info.Username
 			changed = true
+			usernameChanged = true
 		}
 	}
 
@@ -737,6 +749,9 @@ func (p *Plugin) updateUserIfChanged(user *model.User, info *OIDCUserInfo) (*mod
 
 	updatedUser, appErr := p.API.UpdateUser(user)
 	if appErr != nil {
+		if usernameChanged && appErr.Id == usernameExistsAppErrorID {
+			return nil, fmt.Errorf("%w: %s", errUsernameConflict, user.Username)
+		}
 		return nil, fmt.Errorf("failed to update user: %s", appErr.Error())
 	}
 	return updatedUser, nil

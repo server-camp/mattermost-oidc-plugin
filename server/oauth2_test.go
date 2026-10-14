@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -362,6 +363,65 @@ func TestUpdateUserIfChanged(t *testing.T) {
 		}
 		if !strings.Contains(err.Error(), "failed to update user") {
 			t.Errorf("error = %q, want containing 'failed to update user'", err.Error())
+		}
+		api.AssertExpectations(t)
+	})
+
+	t.Run("username updates when enabled", func(t *testing.T) {
+		api := &plugintest.API{}
+		p := &Plugin{}
+		p.SetAPI(api)
+		p.setConfiguration(&Configuration{AutoUpdateUsername: true})
+
+		user := &model.User{
+			Id:       "user-1",
+			Email:    "user@example.com",
+			Username: "oldname",
+		}
+		info := &OIDCUserInfo{
+			Email:    "user@example.com",
+			Username: "newname",
+		}
+
+		api.On("UpdateUser", mock.MatchedBy(func(u *model.User) bool {
+			return u.Id == "user-1" && u.Username == "newname"
+		})).Return(func(u *model.User) *model.User {
+			return u
+		}, nil)
+
+		updated, err := p.updateUserIfChanged(user, info)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if updated.Username != "newname" {
+			t.Errorf("Username = %q, want 'newname'", updated.Username)
+		}
+		api.AssertExpectations(t)
+	})
+
+	t.Run("username conflict is classified", func(t *testing.T) {
+		api := &plugintest.API{}
+		p := &Plugin{}
+		p.SetAPI(api)
+		p.setConfiguration(&Configuration{AutoUpdateUsername: true})
+
+		user := &model.User{
+			Id:       "user-1",
+			Email:    "user@example.com",
+			Username: "oldname",
+		}
+		info := &OIDCUserInfo{
+			Email:    "user@example.com",
+			Username: "takenname",
+		}
+
+		api.On("UpdateUser", mock.MatchedBy(func(u *model.User) bool {
+			return u.Id == "user-1" && u.Username == "takenname"
+		})).Return(nil, model.NewAppError("UpdateUser", usernameExistsAppErrorID, nil, "", http.StatusBadRequest))
+
+		_, err := p.updateUserIfChanged(user, info)
+		if !errors.Is(err, errUsernameConflict) {
+			t.Fatalf("error = %v, want username conflict", err)
 		}
 		api.AssertExpectations(t)
 	})
