@@ -4,6 +4,7 @@ go 1.26.7
 
 require (
 	github.com/coreos/go-oidc/v3 v3.21.0
+	github.com/go-jose/go-jose/v4 v4.1.6
 	github.com/gorilla/mux v1.8.1
 	github.com/mattermost/mattermost/server/public v0.4.4
 	github.com/stretchr/testify v1.12.1
@@ -17,7 +18,6 @@ require (
 	github.com/fatih/color v1.19.0 // indirect
 	github.com/francoispqt/gojay v1.2.13 // indirect
 	github.com/go-asn1-ber/asn1-ber v1.5.8 // indirect
-	github.com/go-jose/go-jose/v4 v4.1.5 // indirect
 	github.com/goccy/go-yaml v1.19.2 // indirect
 	github.com/golang/protobuf v1.5.4 // indirect
 	github.com/google/uuid v1.6.0 // indirect
