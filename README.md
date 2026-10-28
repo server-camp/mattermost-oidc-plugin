@@ -180,32 +180,6 @@ After saving, the Mattermost / Mostlymatter server must be restarted.
 
 Note that Authentik doesn't have a `family_name` claim. Mattermost optimistically skips parsing the family name if not present.
 
-## Project Structure
-
-```
-mattermost-oidc-plugin/
-├── plugin.json              # Plugin manifest and settings schema
-├── Makefile                 # Build system
-├── README.md                # This file
-├── assets/
-│   └── oidc-icon.svg        # Plugin icon
-├── server/
-│   ├── go.mod               # Go module definition
-│   ├── main.go              # Entry point
-│   ├── plugin.go            # Plugin struct, lifecycle, router
-│   ├── configuration.go     # Configuration type and validation
-│   └── oauth2.go            # OIDC/OAuth2 flow handlers
-├── webapp/
-│   ├── package.json         # Node dependencies
-│   ├── webpack.config.js    # Webpack configuration
-│   └── src/
-│       └── index.js         # Login button React component
-└── mobile-bridge/           # Optional reverse-proxy shim for native mobile app
-    ├── main.go              # Shim: client-config injection + mobile_login redirect
-    ├── Dockerfile           # Container image for the shim
-    └── README.md            # Ingress wiring, env vars, test plan, troubleshooting
-```
-
 ## Security
 
 - **HMAC-signed state parameters** prevent CSRF attacks
