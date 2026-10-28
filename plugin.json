@@ -140,6 +140,13 @@
                 "default": false
             },
             {
+                "key": "AutoUpdateUsername",
+                "display_name": "Auto-Update Username of Existing Accounts",
+                "type": "bool",
+                "help_text": "When enabled, existing accounts will have their usernames automatically updated from the OIDC provider on every login if the email or OIDC subject matches.",
+                "default": false
+            },
+            {
                 "key": "DefaultTeam",
                 "display_name": "Default Team",
                 "type": "text",
