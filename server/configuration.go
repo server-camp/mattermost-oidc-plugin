@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"slices"
 	"strings"
 )
@@ -12,6 +13,7 @@ type Configuration struct {
 	IssuerURL            string `json:"IssuerURL"`
 	ClientID             string `json:"ClientID"`
 	ClientSecret         string `json:"ClientSecret"`
+	ClientSecretEnv      string `json:"ClientSecretEnv"`
 	Scopes               string `json:"Scopes"`
 	ButtonText           string `json:"ButtonText"`
 	ButtonColor          string `json:"ButtonColor"`
@@ -42,8 +44,8 @@ func (c *Configuration) IsValid() error {
 	if c.ClientID == "" {
 		return fmt.Errorf("client ID is required")
 	}
-	if c.ClientSecret == "" {
-		return fmt.Errorf("client secret is required")
+	if _, err := c.getClientSecret(); err != nil {
+		return err
 	}
 
 	scopes := c.GetScopes()
@@ -56,6 +58,21 @@ func (c *Configuration) IsValid() error {
 	}
 
 	return nil
+}
+
+// getClientSecret resolves the secret without copying it into the saved settings.
+func (c *Configuration) getClientSecret() (string, error) {
+	if c.ClientSecretEnv != "" {
+		secret := os.Getenv(c.ClientSecretEnv)
+		if secret == "" {
+			return "", fmt.Errorf("client secret environment variable %q is unset or empty", c.ClientSecretEnv)
+		}
+		return secret, nil
+	}
+	if c.ClientSecret == "" {
+		return "", fmt.Errorf("client secret is required")
+	}
+	return c.ClientSecret, nil
 }
 
 // GetScopes parses the space-separated scopes string into a slice.

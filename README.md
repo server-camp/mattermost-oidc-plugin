@@ -126,6 +126,7 @@ Go to **System Console → Plugins → OIDC Authentication**:
 | **Issuer URL**                           | OIDC Issuer URL                   | `https://idp.example.com/application/o/mostlymatter/` |
 | **Client ID**                            | Client ID from your provider      | `mostlymatter`                                        |
 | **Client Secret**                        | Client secret from your provider  | `secret123`                                           |
+| **Client Secret Environment Variable**    | Variable name containing the secret | `OIDC_CLIENT_SECRET`                                |
 | **Scopes**                               | Requested scopes                  | `openid profile email`                                |
 | **Button Text**                          | Text on the login button          | `Log in with SSO`                                     |
 | **Button Color**                         | Color of the login button         | `#0058CC`                                             |
@@ -141,6 +142,21 @@ Go to **System Console → Plugins → OIDC Authentication**:
 | **Default Team**                         | Team slug for new users           | `main`                                                |
 
 When **Auto-Link Existing Accounts by Email** is enabled, consider also enabling **Require Email Verified** after setting **Email Verified Claim** to `email_verified` (or your provider's claim name) if your identity provider sends that claim. This prevents linking to an existing account via an unverified email address.
+
+#### Client secret from the environment
+
+Set `ClientSecretEnv` (the **Client Secret Environment Variable** setting) to the
+name of an environment variable available to the Mattermost server process.
+For example, inject `OIDC_CLIENT_SECRET` from a Kubernetes Secret using
+`env.valueFrom.secretKeyRef`, then set `ClientSecretEnv` to `OIDC_CLIENT_SECRET`.
+Clear the **Client Secret** setting so the credential stays out of plugin settings
+and deployment configuration.
+
+When `ClientSecretEnv` is set, its value takes precedence over **Client Secret**.
+An unset or empty variable blocks OIDC login without falling back to the stored
+secret. The plugin only keeps the resolved secret in memory for OAuth2 requests.
+Restart the server after changing the environment variable. Leave `ClientSecretEnv`
+empty to keep using the **Client Secret** setting.
 
 #### Desktop app
 

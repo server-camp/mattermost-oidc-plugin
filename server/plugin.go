@@ -183,6 +183,11 @@ func (p *Plugin) initOIDCProvider() error {
 		return err
 	}
 
+	clientSecret, err := config.getClientSecret()
+	if err != nil {
+		return err
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	if p.discoveryClient != nil {
@@ -211,7 +216,7 @@ func (p *Plugin) initOIDCProvider() error {
 
 	oauthConfig := &oauth2.Config{
 		ClientID:     config.ClientID,
-		ClientSecret: config.ClientSecret,
+		ClientSecret: clientSecret,
 		RedirectURL:  redirectURL,
 		Endpoint:     provider.Endpoint(),
 		Scopes:       config.GetScopes(),
