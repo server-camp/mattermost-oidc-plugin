@@ -24,6 +24,7 @@ type Configuration struct {
 	RequireEmailVerified bool   `json:"RequireEmailVerified"`
 	AutoCreateAccounts   bool   `json:"AutoCreateAccounts"`
 	AutoLinkByEmail      bool   `json:"AutoLinkByEmail"`
+	AutoUpdateUsername   bool   `json:"AutoUpdateUsername"`
 	DefaultTeam          string `json:"DefaultTeam"`
 }
 
