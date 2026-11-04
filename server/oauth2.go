@@ -33,12 +33,7 @@ const (
 	// feed the callback to a victim, silently logging the victim into the attacker's
 	// account (login CSRF). The mobile and desktop flows are exempt (see the callback).
 	oidcStateCookie = "MMOIDCSTATE"
-
-	// usernameExistsAppErrorID is the error ID returned by Mattermost when trying to save a user with an existing username.
-	usernameExistsAppErrorID = "app.user.save.username_exists.app_error"
 )
-
-var errUsernameConflict = errors.New("OIDC username conflicts with an existing Mattermost account")
 
 // OAuthState represents the state parameter stored in KV during the OAuth flow.
 type OAuthState struct {
@@ -87,6 +82,8 @@ type OIDCUserInfo struct {
 	LastName      string `json:"last_name"`
 	Position      string `json:"position,omitempty"`
 	EmailVerified *bool  `json:"email_verified,omitempty"`
+	// UsernameFromClaim is false when Username was derived from the email address.
+	UsernameFromClaim bool `json:"-"`
 }
 
 // handleOAuth2Connect initiates the OIDC login flow by redirecting the user to the identity provider's authorization endpoint.
@@ -352,10 +349,6 @@ func (p *Plugin) handleOAuth2Callback(w http.ResponseWriter, r *http.Request) {
 	mmUser, err := p.getOrCreateUser(userInfo, config)
 	if err != nil {
 		p.API.LogError("Failed to get or create user", "error", err.Error(), "email", userInfo.Email)
-		if errors.Is(err, errUsernameConflict) {
-			p.renderError(w, "The username from your identity provider is already in use in Mattermost. Please contact your administrator.")
-			return
-		}
 		p.renderError(w, "Failed to create or update your account. Contact your administrator.")
 		return
 	}
@@ -534,6 +527,7 @@ func (p *Plugin) extractUserInfo(ctx context.Context, idToken *oidc.IDToken, oau
 	}
 
 	// Fallback: use email prefix as username if no username claim found
+	info.UsernameFromClaim = info.Username != ""
 	if info.Username == "" && info.Email != "" {
 		parts := strings.SplitN(info.Email, "@", 2)
 		info.Username = parts[0]
@@ -657,7 +651,6 @@ func (p *Plugin) getOrCreateUser(userInfo *OIDCUserInfo, config *Configuration) 
 // updateUserIfChanged updates the Mattermost user profile if OIDC claims have changed.
 func (p *Plugin) updateUserIfChanged(user *model.User, info *OIDCUserInfo) (*model.User, error) {
 	changed := false
-	usernameChanged := false
 
 	if info.Email != "" && user.Email != info.Email {
 		user.Email = info.Email
@@ -680,26 +673,49 @@ func (p *Plugin) updateUserIfChanged(user *model.User, info *OIDCUserInfo) (*mod
 		changed = true
 	}
 
+	if changed {
+		updatedUser, appErr := p.API.UpdateUser(user)
+		if appErr != nil {
+			return nil, fmt.Errorf("failed to update user: %s", appErr.Error())
+		}
+		user = updatedUser
+	}
+
 	if p.getConfiguration().AutoUpdateUsername {
-		if info.Username != "" && user.Username != info.Username {
-			user.Username = info.Username
-			changed = true
-			usernameChanged = true
-		}
+		user = p.updateUsername(user, info)
+	}
+	return user, nil
+}
+
+// updateUsername renames the user to the username claim, as core does for its OAuth providers.
+// It never fails the login: a name that is invalid or held by another account is kept and logged.
+func (p *Plugin) updateUsername(user *model.User, info *OIDCUserInfo) *model.User {
+	if !info.UsernameFromClaim || user.Username == info.Username {
+		return user
 	}
 
-	if !changed {
-		return user, nil
+	if !model.IsValidUsername(info.Username) {
+		p.API.LogWarn("Keeping username: the OIDC username is not a valid Mattermost username",
+			"user_id", user.Id, "username", user.Username, "oidc_username", info.Username)
+		return user
+	}
+	if existing, _ := p.API.GetUserByUsername(info.Username); existing != nil {
+		p.API.LogWarn("Keeping username: the OIDC username belongs to another account",
+			"user_id", user.Id, "username", user.Username, "oidc_username", info.Username, "other_user_id", existing.Id)
+		return user
 	}
 
-	updatedUser, appErr := p.API.UpdateUser(user)
+	renamed := *user
+	renamed.Username = info.Username
+	updatedUser, appErr := p.API.UpdateUser(&renamed)
 	if appErr != nil {
-		if usernameChanged && appErr.Id == usernameExistsAppErrorID {
-			return nil, fmt.Errorf("%w: %s", errUsernameConflict, user.Username)
-		}
-		return nil, fmt.Errorf("failed to update user: %s", appErr.Error())
+		p.API.LogWarn("Keeping username: the rename failed",
+			"user_id", user.Id, "username", user.Username, "oidc_username", info.Username, "error", appErr.Error())
+		return user
 	}
-	return updatedUser, nil
+
+	p.API.LogInfo("Updated username from OIDC", "user_id", user.Id, "old_username", user.Username, "username", updatedUser.Username)
+	return updatedUser
 }
 
 // handleGetPublicConfig returns the publicly visible configuration (button text/color, enable status).

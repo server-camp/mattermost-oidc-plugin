@@ -138,9 +138,12 @@ Go to **System Console → Plugins → OIDC Authentication**:
 | **Require Email Verified**               | Reject login if claim is not true | `false`                                               |
 | **Auto-Create Accounts**                 | Automatically create new accounts | `true`                                                |
 | **Auto-Link Existing Accounts by Email** | Link existing accounts by email   | `false`                                               |
+| **Update Usernames on Login**            | Rename to the username claim      | `false`                                               |
 | **Default Team**                         | Team slug for new users           | `main`                                                |
 
 When **Auto-Link Existing Accounts by Email** is enabled, consider also enabling **Require Email Verified** after setting **Email Verified Claim** to `email_verified` (or your provider's claim name) if your identity provider sends that claim. This prevents linking to an existing account via an unverified email address.
+
+Usernames are set when an account is created. With **Update Usernames on Login** enabled, a username changed at the identity provider reaches Mattermost the next time that person logs in, as it does for Mattermost's built-in OAuth providers. The account keeps its current name, and the server log records why, when the new name is taken by another account or is not a valid Mattermost username (reserved names such as `system` and `all` are refused). An account created as `joe_ab12cd` because `joe` was taken keeps that name until `joe` is free. If the provider does not send the username claim, the name derived from the email address is never applied to existing accounts. Mattermost sends its usual username-change email.
 
 #### Desktop app
 

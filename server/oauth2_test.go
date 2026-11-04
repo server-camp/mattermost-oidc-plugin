@@ -2,7 +2,6 @@ package main
 
 import (
 	"encoding/json"
-	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -12,6 +11,7 @@ import (
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin/plugintest"
 	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
 	"golang.org/x/oauth2"
 )
 
@@ -323,65 +323,6 @@ func TestUpdateUserIfChanged(t *testing.T) {
 		api.AssertExpectations(t)
 	})
 
-	t.Run("username updates when enabled", func(t *testing.T) {
-		api := &plugintest.API{}
-		p := &Plugin{}
-		p.SetAPI(api)
-		p.setConfiguration(&Configuration{AutoUpdateUsername: true})
-
-		user := &model.User{
-			Id:       "user-1",
-			Email:    "user@example.com",
-			Username: "oldname",
-		}
-		info := &OIDCUserInfo{
-			Email:    "user@example.com",
-			Username: "newname",
-		}
-
-		api.On("UpdateUser", mock.MatchedBy(func(u *model.User) bool {
-			return u.Id == "user-1" && u.Username == "newname"
-		})).Return(func(u *model.User) *model.User {
-			return u
-		}, nil)
-
-		updated, err := p.updateUserIfChanged(user, info)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if updated.Username != "newname" {
-			t.Errorf("Username = %q, want 'newname'", updated.Username)
-		}
-		api.AssertExpectations(t)
-	})
-
-	t.Run("username conflict is classified", func(t *testing.T) {
-		api := &plugintest.API{}
-		p := &Plugin{}
-		p.SetAPI(api)
-		p.setConfiguration(&Configuration{AutoUpdateUsername: true})
-
-		user := &model.User{
-			Id:       "user-1",
-			Email:    "user@example.com",
-			Username: "oldname",
-		}
-		info := &OIDCUserInfo{
-			Email:    "user@example.com",
-			Username: "takenname",
-		}
-
-		api.On("UpdateUser", mock.MatchedBy(func(u *model.User) bool {
-			return u.Id == "user-1" && u.Username == "takenname"
-		})).Return(nil, model.NewAppError("UpdateUser", usernameExistsAppErrorID, nil, "", http.StatusBadRequest))
-
-		_, err := p.updateUserIfChanged(user, info)
-		if !errors.Is(err, errUsernameConflict) {
-			t.Fatalf("error = %v, want username conflict", err)
-		}
-		api.AssertExpectations(t)
-	})
-
 	t.Run("email verified revoked by provider", func(t *testing.T) {
 		api := &plugintest.API{}
 		p := &Plugin{}
@@ -432,6 +373,171 @@ func TestUpdateUserIfChanged(t *testing.T) {
 		if !updated.EmailVerified {
 			t.Error("EmailVerified should remain true when claim is absent")
 		}
+	})
+}
+
+// recordingAPI keeps info and warning messages so tests can check what was logged.
+type recordingAPI struct {
+	*plugintest.API
+	infos, warns []string
+}
+
+func (a *recordingAPI) LogInfo(msg string, _ ...any) { a.infos = append(a.infos, msg) }
+func (a *recordingAPI) LogWarn(msg string, _ ...any) { a.warns = append(a.warns, msg) }
+
+func TestUpdateUsername(t *testing.T) {
+	setup := func(t *testing.T, enabled bool) (*Plugin, *recordingAPI) {
+		api := &recordingAPI{API: &plugintest.API{}}
+		t.Cleanup(func() { api.AssertExpectations(t) })
+		p := &Plugin{}
+		p.SetAPI(api)
+		p.setConfiguration(&Configuration{AutoUpdateUsername: enabled})
+		return p, api
+	}
+	user := func() *model.User {
+		return &model.User{Id: "user-1", Username: "joe_ab12cd", Email: "joe@example.com"}
+	}
+	claim := func(username string) *OIDCUserInfo {
+		return &OIDCUserInfo{Email: "joe@example.com", Username: username, UsernameFromClaim: true}
+	}
+	saved := func(firstName, username string) any {
+		return mock.MatchedBy(func(u *model.User) bool { return u.FirstName == firstName && u.Username == username })
+	}
+	echo := func(u *model.User) *model.User { return u }
+	notFound := model.NewAppError("GetUserByUsername", "app.user.get_by_username.app_error", nil, "", http.StatusNotFound)
+	otherJoe := &model.User{Id: "user-2", Username: "joe"}
+
+	t.Run("renames to a free username", func(t *testing.T) {
+		p, api := setup(t, true)
+		api.On("GetUserByUsername", "joe").Return(nil, notFound)
+		api.On("UpdateUser", saved("", "joe")).Return(echo, nil).Once()
+
+		updated, err := p.updateUserIfChanged(user(), claim("joe"))
+		require.NoError(t, err)
+		require.Equal(t, "joe", updated.Username)
+		require.Len(t, api.infos, 1)
+		require.Empty(t, api.warns)
+	})
+
+	t.Run("keeps a username held by another account", func(t *testing.T) {
+		p, api := setup(t, true)
+		api.On("GetUserByUsername", "joe").Return(otherJoe, nil)
+
+		updated, err := p.updateUserIfChanged(user(), claim("joe"))
+		require.NoError(t, err)
+		require.Equal(t, "joe_ab12cd", updated.Username)
+		require.Len(t, api.warns, 1)
+	})
+
+	t.Run("keeps the username when the claim is reserved", func(t *testing.T) {
+		p, api := setup(t, true)
+
+		updated, err := p.updateUserIfChanged(user(), claim("system"))
+		require.NoError(t, err)
+		require.Equal(t, "joe_ab12cd", updated.Username)
+		require.Len(t, api.warns, 1)
+	})
+
+	t.Run("keeps the username when the rename fails", func(t *testing.T) {
+		p, api := setup(t, true)
+		api.On("GetUserByUsername", "joe").Return(nil, notFound)
+		api.On("UpdateUser", saved("", "joe")).Return(nil, model.NewAppError("UpdateUser", "app.user.save.username_exists.app_error", nil, "", http.StatusBadRequest))
+
+		updated, err := p.updateUserIfChanged(user(), claim("joe"))
+		require.NoError(t, err)
+		require.Equal(t, "joe_ab12cd", updated.Username)
+		require.Len(t, api.warns, 1)
+	})
+
+	t.Run("updates the profile when the username is taken", func(t *testing.T) {
+		p, api := setup(t, true)
+		info := claim("joe")
+		info.FirstName = "Joe"
+		api.On("UpdateUser", saved("Joe", "joe_ab12cd")).Return(echo, nil).Once()
+		api.On("GetUserByUsername", "joe").Return(otherJoe, nil)
+
+		updated, err := p.updateUserIfChanged(user(), info)
+		require.NoError(t, err)
+		require.Equal(t, "Joe", updated.FirstName)
+		require.Equal(t, "joe_ab12cd", updated.Username)
+	})
+
+	t.Run("updates the profile and then the username", func(t *testing.T) {
+		p, api := setup(t, true)
+		info := claim("joe")
+		info.FirstName = "Joe"
+		api.On("UpdateUser", saved("Joe", "joe_ab12cd")).Return(echo, nil).Once()
+		api.On("GetUserByUsername", "joe").Return(nil, notFound)
+		api.On("UpdateUser", saved("Joe", "joe")).Return(echo, nil).Once()
+
+		updated, err := p.updateUserIfChanged(user(), info)
+		require.NoError(t, err)
+		require.Equal(t, "Joe", updated.FirstName)
+		require.Equal(t, "joe", updated.Username)
+	})
+
+	for _, tc := range []struct {
+		name               string
+		enabled, fromClaim bool
+		username           string
+	}{
+		{"the setting is off", false, true, "joe"},
+		{"the name came from the email address", true, false, "joe"},
+		{"the name already matches", true, true, "joe_ab12cd"},
+	} {
+		t.Run("leaves the username alone when "+tc.name, func(t *testing.T) {
+			p, api := setup(t, tc.enabled)
+			info := claim(tc.username)
+			info.UsernameFromClaim = tc.fromClaim
+
+			updated, err := p.updateUserIfChanged(user(), info)
+			require.NoError(t, err)
+			require.Equal(t, "joe_ab12cd", updated.Username)
+			require.Empty(t, api.warns)
+		})
+	}
+}
+
+func TestLoginUpdatesUsername(t *testing.T) {
+	newEnv := func(t *testing.T, username string, claims map[string]any) *loginEnv {
+		e := newLoginEnv(t, testSite)
+		cfg := e.p.getConfiguration()
+		cfg.AutoUpdateUsername = true
+		e.p.setConfiguration(cfg)
+		e.user.Username = username
+		e.claims = claims
+		return e
+	}
+	loggedIn := func(t *testing.T, e *loginEnv) {
+		rec := e.webLogin()
+		require.Equal(t, http.StatusFound, rec.Code, rec.Body.String())
+		require.Equal(t, testSite+"/", rec.Header().Get("Location"))
+		require.Equal(t, 1, e.sessionCount())
+	}
+
+	t.Run("renames to a free username", func(t *testing.T) {
+		e := newEnv(t, "alice", map[string]any{"preferred_username": "Alice.Smith"})
+		e.api.On("GetUserByUsername", "alice.smith").Return(nil, model.NewAppError("GetUserByUsername", "app.user.get_by_username.app_error", nil, "", http.StatusNotFound))
+		e.api.On("UpdateUser", mock.MatchedBy(func(u *model.User) bool { return u.Username == "alice.smith" })).Return(func(u *model.User) *model.User { return u }, nil).Once()
+
+		loggedIn(t, e)
+		e.api.AssertExpectations(t)
+	})
+
+	t.Run("logs in under the current name when the new one is taken", func(t *testing.T) {
+		e := newEnv(t, "alice_ab12cd", map[string]any{"preferred_username": "alice"})
+		e.api.On("GetUserByUsername", "alice").Return(&model.User{Id: "user-other-alice", Username: "alice"}, nil)
+
+		loggedIn(t, e)
+		e.api.AssertNotCalled(t, "UpdateUser", mock.Anything)
+	})
+
+	t.Run("never applies the name derived from the email address", func(t *testing.T) {
+		e := newEnv(t, "alice_ab12cd", nil)
+
+		loggedIn(t, e)
+		e.api.AssertNotCalled(t, "GetUserByUsername", mock.Anything)
+		e.api.AssertNotCalled(t, "UpdateUser", mock.Anything)
 	})
 }
 

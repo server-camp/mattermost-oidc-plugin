@@ -141,9 +141,9 @@
             },
             {
                 "key": "AutoUpdateUsername",
-                "display_name": "Auto-Update Username of Existing Accounts",
+                "display_name": "Update Usernames on Login",
                 "type": "bool",
-                "help_text": "When enabled, existing accounts will have their usernames automatically updated from the OIDC provider on every login if the email or OIDC subject matches.",
+                "help_text": "When enabled, an existing account's username is updated from the username claim on every login. The current username is kept, and a warning logged, when the new one is not a valid Mattermost username or belongs to another account. Nothing changes when the provider does not send the claim.",
                 "default": false
             },
             {
