@@ -48,18 +48,10 @@
                 "key": "ClientSecret",
                 "display_name": "Client Secret",
                 "type": "text",
-                "help_text": "The OAuth 2.0 Client Secret registered with your OIDC provider. Leave empty when Client Secret Environment Variable is configured.",
+                "help_text": "The OAuth 2.0 Client Secret registered with your OIDC provider. Can be overridden by setting the MM_OIDC_CLIENT_SECRET environment variable on the Mattermost server; leave this field empty to keep the secret out of the plugin configuration entirely.",
                 "default": "",
                 "placeholder": "your-client-secret",
                 "secret": true
-            },
-            {
-                "key": "ClientSecretEnv",
-                "display_name": "Client Secret Environment Variable",
-                "type": "text",
-                "help_text": "Optional name of an environment variable containing the client secret. Takes precedence over Client Secret. An unset or empty variable blocks OIDC login. Restart the server after changing the environment variable.",
-                "default": "",
-                "placeholder": "OIDC_CLIENT_SECRET"
             },
             {
                 "key": "Scopes",

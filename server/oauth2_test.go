@@ -979,13 +979,12 @@ func TestOnActivateAndConfigChangeDoNotRedundantlyInitProvider(t *testing.T) {
 }
 
 func TestClientSecretEnvironmentLifecycle(t *testing.T) {
-	const envName = "OIDC_TEST_LIFECYCLE_SECRET"
-	t.Setenv(envName, "environment-secret")
+	t.Setenv(clientSecretEnvVar, "environment-secret")
 	var up atomic.Bool
 	var hits atomic.Int32
 	p, issuer := newDiscoveryTestPlugin(t, &up, &hits, nil)
 	up.Store(true)
-	cfg := Configuration{Enable: true, IssuerURL: issuer, ClientID: "mattermost", ClientSecretEnv: envName}
+	cfg := Configuration{Enable: true, IssuerURL: issuer, ClientID: "mattermost"}
 	api := p.API.(quietAPI).API
 	api.On("KVGet", kvEncryptionKey).Return([]byte("test-key"), nil)
 	api.On("LoadPluginConfiguration", mock.Anything).Run(func(args mock.Arguments) {
@@ -1001,23 +1000,32 @@ func TestClientSecretEnvironmentLifecycle(t *testing.T) {
 		t.Fatal("OAuth2 configuration did not use the environment secret")
 	}
 	if p.getConfiguration().ClientSecret != "" || cfg.ClientSecret != "" {
-		t.Fatal("resolved secret leaked into plugin settings")
+		t.Fatal("environment secret leaked into plugin settings")
 	}
 	rec := httptest.NewRecorder()
 	p.router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/config", nil))
-	if strings.Contains(rec.Body.String(), "environment-secret") || strings.Contains(rec.Body.String(), envName) {
-		t.Fatal("public configuration exposed secret settings")
+	if strings.Contains(rec.Body.String(), "environment-secret") {
+		t.Fatal("public configuration exposed the secret")
 	}
-	// Changing the variable setting invalidates the previous provider and fails closed.
-	cfg.ClientSecretEnv = "OIDC_TEST_MISSING_SECRET"
-	t.Setenv(cfg.ClientSecretEnv, "")
+	// Removing the environment variable (without a stored secret) invalidates the
+	// configuration on the next reload and fails closed.
+	t.Setenv(clientSecretEnvVar, "")
+	cfg.ButtonText = "Log in with SSO"
 	if err := p.OnConfigurationChange(); err != nil {
 		t.Fatal(err)
 	}
 	if p.getOAuthConfig() != nil {
-		t.Fatal("invalid environment setting retained the old OAuth2 configuration")
+		t.Fatal("missing environment secret retained the old OAuth2 configuration")
 	}
 	if hits.Load() != 1 {
 		t.Fatalf("invalid settings triggered discovery: got %d calls, want 1", hits.Load())
+	}
+	// With the variable gone, the stored setting is used again.
+	cfg.ClientSecret = "stored-secret"
+	if err := p.OnConfigurationChange(); err != nil {
+		t.Fatal(err)
+	}
+	if got := p.getOAuthConfig(); got == nil || got.ClientSecret != "stored-secret" {
+		t.Fatal("OAuth2 configuration did not fall back to the stored secret")
 	}
 }

@@ -245,21 +245,29 @@ func TestConfigurationClone(t *testing.T) {
 }
 
 func TestClientSecretEnvironment(t *testing.T) {
-	const envName = "OIDC_TEST_CLIENT_SECRET"
 	for _, tc := range []struct {
-		name, stored, envName, envValue, want string
-		wantErr                               bool
+		name, stored, envValue string
+		envSet                 bool
+		want                   string
+		wantErr                bool
 	}{
 		{name: "stored secret", stored: "stored", want: "stored"},
-		{name: "environment only", envName: envName, envValue: "from-env", want: "from-env"},
-		{name: "environment overrides stored", stored: "stored", envName: envName, envValue: "from-env", want: "from-env"},
-		{name: "empty environment does not fall back", stored: "stored", envName: envName, wantErr: true},
+		{name: "environment only", envSet: true, envValue: "from-env", want: "from-env"},
+		{name: "environment overrides stored", stored: "stored", envSet: true, envValue: "from-env", want: "from-env"},
+		{name: "empty environment falls back to stored", stored: "stored", envSet: true, want: "stored"},
 		{name: "missing secret", wantErr: true},
-		{name: "preserve secret whitespace", envName: envName, envValue: " secret\n", want: " secret\n"},
+		{name: "preserve secret whitespace", envSet: true, envValue: " secret\n", want: " secret\n"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			t.Setenv(envName, tc.envValue)
-			cfg := Configuration{Enable: true, IssuerURL: "https://idp.example.com", ClientID: "client", ClientSecret: tc.stored, ClientSecretEnv: tc.envName}
+			if tc.envSet {
+				t.Setenv(clientSecretEnvVar, tc.envValue)
+			} else {
+				t.Setenv(clientSecretEnvVar, "")
+				if err := os.Unsetenv(clientSecretEnvVar); err != nil {
+					t.Fatal(err)
+				}
+			}
+			cfg := Configuration{Enable: true, IssuerURL: "https://idp.example.com", ClientID: "client", ClientSecret: tc.stored}
 			got, err := cfg.getClientSecret()
 			if (err != nil) != tc.wantErr || got != tc.want {
 				t.Fatalf("getClientSecret() = %q, %v, want %q, error %v", got, err, tc.want, tc.wantErr)
@@ -272,16 +280,9 @@ func TestClientSecretEnvironment(t *testing.T) {
 			}
 		})
 	}
-	t.Setenv(envName, "")
-	if err := os.Unsetenv(envName); err != nil {
-		t.Fatal(err)
-	}
-	cfg := Configuration{Enable: true, IssuerURL: "https://idp.example.com", ClientID: "client", ClientSecret: "stored", ClientSecretEnv: envName}
-	if _, err := cfg.getClientSecret(); err == nil {
-		t.Fatal("unset environment variable must not fall back to stored secret")
-	}
-	cfg.Enable = false
+	t.Setenv(clientSecretEnvVar, "")
+	cfg := Configuration{IssuerURL: "https://idp.example.com", ClientID: "client"}
 	if err := cfg.IsValid(); err != nil {
-		t.Fatalf("disabled plugin rejected missing environment: %v", err)
+		t.Fatalf("disabled plugin rejected missing secret: %v", err)
 	}
 }
