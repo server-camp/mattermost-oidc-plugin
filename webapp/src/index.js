@@ -140,15 +140,7 @@ class PluginClass {
 
     initialize(registry, store) {
         this.store = store;
-
-        // Register the login button component on the custom login buttons slot.
-        // This hook is available in Mattermost v7.8+ (webapp plugin API).
-        if (registry.registerCustomLoginButtonComponent) {
-            registry.registerCustomLoginButtonComponent(OIDCLoginButton);
-        } else {
-            // Fallback: inject the button into the login page via DOM manipulation
-            this.injectLoginButton();
-        }
+        this.injectLoginButton();
     }
 
     injectLoginButton() {
