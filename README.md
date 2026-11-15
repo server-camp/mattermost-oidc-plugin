@@ -240,6 +240,9 @@ The plugin side handles the mobile callback by handing the session token back to
 **Login button not visible**
 → Enable the plugin in the System Console, clear browser cache
 
+**Login page shows "This server doesn't have any sign-in methods enabled" without an OIDC button**
+→ The plugin's login card takeover needs the plugin to be enabled with a valid configuration (check the server logs) and its webapp bundle to load before login.
+
 **"failed to create user"**
 → Check that auto-create is enabled and that the username doesn't already exist
 

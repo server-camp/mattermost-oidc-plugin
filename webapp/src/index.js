@@ -1,13 +1,33 @@
 import React, {useEffect, useState} from 'react';
 
+import {coreSignInAvailable} from './core_login_state';
 import {checkDesktopLogin, hasPendingDesktopLogin, isDesktopApp, startDesktopLogin} from './desktop_login';
 
 const PLUGIN_ID = 'mattermost-oidc';
 const OAUTH2_BASE = `/plugins/${PLUGIN_ID}/oauth2`;
+const BUTTON_CONTAINER_ID = 'oidc-login-button-container';
+const TAKEOVER_CARD_ID = 'oidc-no-methods-card';
 const DESKTOP_STATUS_TEXT = {
     starting: 'Redirecting to browser...',
     waiting: 'Authenticating in the browser, awaiting valid token.',
     error: 'Something went wrong. Click the button to try again.',
+};
+
+// loadPublicConfig fetches the plugin's public config once and shares the result between the button component and the login page injection logic.
+// Failed fetches are not cached, so the next caller retries.
+let publicConfigPromise = null;
+const loadPublicConfig = () => {
+    if (!publicConfigPromise) {
+        publicConfigPromise = fetch(`/plugins/${PLUGIN_ID}/api/v1/config`).then((res) => {
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            return res.json();
+        });
+        const pending = publicConfigPromise;
+        pending.catch(() => {
+            if (publicConfigPromise === pending) publicConfigPromise = null;
+        });
+    }
+    return publicConfigPromise;
 };
 
 // OIDCLoginButton adds a custom SSO button to the Mattermost login page.
@@ -17,25 +37,17 @@ const OIDCLoginButton = () => {
     const [desktopStatus, setDesktopStatus] = useState('');
 
     useEffect(() => {
-        const controller = new AbortController();
-        fetch(`/plugins/${PLUGIN_ID}/api/v1/config`, {signal: controller.signal})
-            .then((res) => {
-                if (!res.ok) {
-                    throw new Error(`HTTP ${res.status}`);
-                }
-                return res.json();
-            })
-            .then((data) => {
+        let cancelled = false;
+        loadPublicConfig().then((data) => {
+            if (!cancelled) {
                 setConfig(data);
                 setLoading(false);
-            })
-            .catch((err) => {
-                if (err.name !== 'AbortError') {
-                    console.error('Failed to load OIDC config:', err);
-                    setLoading(false);
-                }
-            });
-        return () => controller.abort();
+            }
+        }).catch((err) => {
+            console.error('Failed to load OIDC config:', err);
+            if (!cancelled) setLoading(false);
+        });
+        return () => cancelled = true;
     }, []);
 
     useEffect(() => {
@@ -118,7 +130,17 @@ const OIDCLoginButton = () => {
 
 // Plugin registration
 class PluginClass {
-    initialize(registry) {
+    constructor() {
+        this.store = null;
+        this.observer = null;
+        this.mounted = null; // {container, root} of the currently mounted button
+        this.takeover = null; // error block whose takeover (see issue #44) is being decided (async)
+        this.noMethodsCard = null; // {card, container, errorBlock} of an active takeover
+    }
+
+    initialize(registry, store) {
+        this.store = store;
+
         // Register the login button component on the custom login buttons slot.
         // This hook is available in Mattermost v7.8+ (webapp plugin API).
         if (registry.registerCustomLoginButtonComponent) {
@@ -130,48 +152,153 @@ class PluginClass {
     }
 
     injectLoginButton() {
-        // Observe DOM changes to inject the button when the login page renders.
+        // Observe DOM changes to inject the button when the login page renders. Observer stays connected after injecting (instead of disconnecting): the page can
+        this.observer = new MutationObserver(() => this.onLoginDomChanged());
+        this.observer.observe(document.body, {childList: true, subtree: true});
+        this.onLoginDomChanged();
+    }
+
+    onLoginDomChanged() {
         // Restrict to the login page: the `.signup-team__container` selector also
         // matches the "select team" screen (/select_team), which is shown *after*
         // a successful login, so it must not be used as an injection target there.
-        this.observer = new MutationObserver(() => {
-            if (!window.location.pathname.startsWith('/login')) {
-                return;
-            }
-            const loginForm = document.querySelector('.signup-team__container, .login-body-card-content');
-            if (loginForm && !document.getElementById('oidc-login-button-container')) {
-                const container = document.createElement('div');
-                container.id = 'oidc-login-button-container';
-                container.style.marginBottom = '16px';
+        if (!window.location.pathname.startsWith('/login')) return;
 
-                // Insert before the form
-                const form = loginForm.querySelector('form');
-                if (form) {
-                    form.parentNode.insertBefore(container, form);
-                } else {
-                    loginForm.prepend(container);
-                }
+        const loginForm = document.querySelector('.signup-team__container, .login-body-card-content');
+        if (loginForm && !loginForm.closest(`#${TAKEOVER_CARD_ID}`)) {
+            this.undoNoMethodsTakeover();
+            if (!document.getElementById(BUTTON_CONTAINER_ID)) this.renderIntoLoginForm(loginForm);
+            return;
+        }
+        if (!loginForm) this.takeOverNoMethodsScreen();
+    }
 
-                // Render React component (React/ReactDOM are provided as globals by Mattermost)
-                const ReactLib = window.React;
-                const ReactDOM = window.ReactDOM;
-                if (!ReactLib || !ReactDOM) {
-                    console.warn('OIDC plugin: React/ReactDOM globals not available');
-                    return;
-                }
-                if (ReactDOM.createRoot) {
-                    this.reactRoot = ReactDOM.createRoot(container);
-                    this.reactRoot.render(ReactLib.createElement(OIDCLoginButton));
-                } else {
-                    ReactDOM.render(ReactLib.createElement(OIDCLoginButton), container);
-                }
+    // renderIntoLoginForm inserts the button above the core login form.
+    renderIntoLoginForm(loginForm) {
+        const container = document.createElement('div');
+        container.id = BUTTON_CONTAINER_ID;
+        container.style.marginBottom = '16px';
 
-                // Button injected — stop observing
-                this.observer.disconnect();
+        // Insert before the form
+        const form = loginForm.querySelector('form');
+        if (form) {
+            form.parentNode.insertBefore(container, form);
+        } else {
+            loginForm.prepend(container);
+        }
+
+        this.renderButton(container);
+    }
+
+    // takeOverNoMethodsScreen replaces core's dead-end "This server doesn't have any sign-in methods enabled" error screen when the plugin itself can offer sign-in.
+    // See https://github.com/server-camp/mattermost-oidc-plugin/issues/44.
+    takeOverNoMethodsScreen() {
+        // A page re-render may have discarded a previous takeover without uninitialize() running.
+        if (this.noMethodsCard && !this.noMethodsCard.card.isConnected) {
+            this.noMethodsCard = null;
+            this.mounted = null;
+        }
+
+        const errorBlock = document.querySelector('.content-layout-column');
+        if (!errorBlock || this.takeover === errorBlock || this.noMethodsCard) return;
+
+        // Only take over when core's own inputs (client config + license, via the app store) confirm that no sign-in method is available.
+        // null (config not loaded yet) is retried on the next DOM change, which the config load necessarily triggers.
+        if (this.readCoreSignInAvailable() !== false) {
+            return;
+        }
+
+        this.takeover = errorBlock;
+        loadPublicConfig().then((config) => {
+            if (this.takeover !== errorBlock)  return; // cancelled, e.g. the login card appeared in the meantime
+            this.takeover = null;
+            if (!config || !config.enable || !errorBlock.isConnected) return;
+            this.renderNoMethodsLoginCard(errorBlock);
+        }, () => {
+            if (this.takeover === errorBlock) {
+                this.takeover = null;
             }
         });
+    }
 
-        this.observer.observe(document.body, {childList: true, subtree: true});
+    renderNoMethodsLoginCard(errorBlock) {
+        errorBlock.style.display = 'none';
+
+        // Reuse core's card classes so the button inherits the login page's styling.
+        const card = document.createElement('div');
+        card.className = 'login-body-card';
+        card.id = TAKEOVER_CARD_ID;
+        const container = document.createElement('div');
+        container.className = 'login-body-card-content';
+        container.id = BUTTON_CONTAINER_ID;
+        card.appendChild(container);
+        errorBlock.parentNode.insertBefore(card, errorBlock.nextSibling);
+
+        this.noMethodsCard = {card, container, errorBlock};
+        this.renderButton(container);
+    }
+
+    undoNoMethodsTakeover() {
+        this.takeover = null;
+        if (!this.noMethodsCard) {
+            return;
+        }
+        const {card, errorBlock} = this.noMethodsCard;
+        this.noMethodsCard = null;
+        this.detachButton(); // also removes the container from the card
+        card.remove();
+        errorBlock.style.display = '';
+    }
+
+    // readCoreSignInAvailable mirrors the decision in core's login.tsx whether a login card is rendered, based on the same client config/license state the app itself uses.
+    readCoreSignInAvailable() {
+        if (!this.store) {
+            return null;
+        }
+        const state = this.store.getState();
+        const general = (state.entities || {}).general || {};
+        return coreSignInAvailable(general.config, general.license);
+    }
+
+    // renderButton renders the OIDC login button into a container.
+    renderButton(container) {
+        const ReactLib = window.React;
+        const ReactDOM = window.ReactDOM;
+        if (!ReactLib || !ReactDOM) {
+            console.warn('OIDC plugin: React/ReactDOM globals not available');
+            return;
+        }
+
+        // Release the React root of a mount that a page re-render discarded along with its container, so roots don't accumulate across login visits.
+        if (this.mounted && !this.mounted.container.isConnected) {
+            this.detachButton();
+        }
+
+        if (ReactDOM.createRoot) {
+            const root = ReactDOM.createRoot(container);
+            this.mounted = {container, root};
+            root.render(ReactLib.createElement(OIDCLoginButton));
+        } else {
+            this.mounted = {container, root: null};
+            ReactDOM.render(ReactLib.createElement(OIDCLoginButton), container);
+        }
+    }
+
+    // detachButton unmounts the button and removes its container, tolerating an already detached node.
+    detachButton() {
+        const mounted = this.mounted;
+        this.mounted = null;
+        if (!mounted) return;
+        try {
+            if (mounted.root) {
+                mounted.root.unmount();
+            } else if (window.ReactDOM && window.ReactDOM.unmountComponentAtNode) {
+                window.ReactDOM.unmountComponentAtNode(mounted.container);
+            }
+        } catch (err) {
+            console.error('OIDC plugin: failed to unmount login button:', err);
+        }
+        mounted.container.remove();
     }
 
     uninitialize() {
@@ -179,16 +306,12 @@ class PluginClass {
             this.observer.disconnect();
             this.observer = null;
         }
-        const container = document.getElementById('oidc-login-button-container');
-        if (container) {
-            if (this.reactRoot) {
-                this.reactRoot.unmount();
-                this.reactRoot = null;
-            } else if (window.ReactDOM && window.ReactDOM.unmountComponentAtNode) {
-                window.ReactDOM.unmountComponentAtNode(container);
-            }
-            container.remove();
-        }
+        this.undoNoMethodsTakeover();
+        this.detachButton();
+
+        // A container may exist without a successful mount (e.g. React globals were unavailable).
+        const container = document.getElementById(BUTTON_CONTAINER_ID);
+        if (container) container.remove();
     }
 }
 

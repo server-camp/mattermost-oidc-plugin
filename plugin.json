@@ -15,7 +15,8 @@
         }
     },
     "webapp": {
-        "bundle_path": "webapp/dist/main.js"
+        "bundle_path": "webapp/dist/main.js",
+        "pre_auth": true
     },
     "settings_schema": {
         "header": "Configure OpenID Connect (OIDC) authentication for your Mattermost / Mostlymatter instance. This plugin enables SSO login via any standard OIDC-compliant provider.",
