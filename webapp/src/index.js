@@ -188,7 +188,8 @@ class PluginClass {
         // A page re-render may have discarded a previous takeover without uninitialize() running.
         if (this.noMethodsCard && !this.noMethodsCard.card.isConnected) {
             this.noMethodsCard = null;
-            this.mounted = null;
+            // Unmount the orphan too: its desktop-polling interval would otherwise keep running and race a fresh mount for the single-use desktop code.
+            this.detachButton();
         }
 
         const errorBlock = document.querySelector('.content-layout-column');
