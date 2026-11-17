@@ -25,6 +25,10 @@ func TestMatchesMobileUA(t *testing.T) {
 		{webUA, "Mattermost Mobile/", false},
 		{mobileUA, "", false}, // empty match never matches
 		{"", "Mattermost Mobile/", false},
+		{"MattCha/1.4 iOS", "Mattermost Mobile/,MattCha", true},
+		{mobileUA, "Mattermost Mobile/,MattCha", true},
+		{webUA, "Mattermost Mobile/,MattCha", false},
+		{"Mozilla/5.0", "MattCha,Mattermost Mobile/", false}, // non-anchored substring must match anywhere in the list
 	}
 	for _, c := range cases {
 		if got := matchesMobileUA(c.ua, c.match); got != c.want {
@@ -51,12 +55,15 @@ func TestHandleMobileLogin(t *testing.T) {
 		}
 	})
 
-	t.Run("missing redirect_to is 400", func(t *testing.T) {
+	t.Run("missing redirect_to falls back to cookie session", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/oauth/openid/mobile_login", nil)
 		rec := httptest.NewRecorder()
 		handleMobileLogin(cfg, rec, req)
-		if rec.Code != http.StatusBadRequest {
-			t.Errorf("status = %d, want %d", rec.Code, http.StatusBadRequest)
+		if rec.Code != http.StatusFound {
+			t.Fatalf("status = %d, want %d", rec.Code, http.StatusFound)
+		}
+		if loc := rec.Header().Get("Location"); loc != cfg.pluginConnectPath {
+			t.Errorf("Location = %q, want %q", loc, cfg.pluginConnectPath)
 		}
 	})
 }
@@ -161,6 +168,39 @@ func TestRewriteClientConfig(t *testing.T) {
 			t.Errorf("OpenIdButtonColor = %q, want %q", m["OpenIdButtonColor"], "#ABCDEF")
 		}
 	})
+}
+
+func TestBridgedRoutes(t *testing.T) {
+	routes := []string{
+		"/oauth/openid/mobile_login?redirect_to=mmauth%3A%2F%2Fcallback",
+		"/oauth/openid/login",
+		"/oauth/gitlab/mobile_login?redirect_to=mmauth%3A%2F%2Fcallback",
+		"/oauth/gitlab/login",
+	}
+	cfg := baseConfig()
+	shim := httptest.NewServer(newHandler(cfg, &http.Client{Timeout: time.Second}, &buttonCache{ttl: time.Minute}))
+	defer shim.Close()
+
+	for _, path := range routes {
+		req, _ := http.NewRequest(http.MethodGet, shim.URL+path, nil)
+		req.Header.Set("User-Agent", mobileUA)
+		// no-follow: this route's 302 target lives behind the real Mattermost,
+		// not inside the shim
+		client := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		}}
+		resp, err := client.Do(req)
+		if err != nil {
+			t.Fatalf("%s: request failed: %v", path, err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusFound {
+			t.Errorf("%s: status = %d, want %d", path, resp.StatusCode, http.StatusFound)
+		}
+		if loc := resp.Header.Get("Location"); !strings.HasPrefix(loc, cfg.pluginConnectPath) {
+			t.Errorf("%s: Location = %q, want prefix %q", path, loc, cfg.pluginConnectPath)
+		}
+	}
 }
 
 func TestHealthz(t *testing.T) {
