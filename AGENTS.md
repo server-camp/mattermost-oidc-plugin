@@ -21,10 +21,11 @@ make deploy       # Upload to Mattermost (requires MM_SERVICESETTINGS_SITEURL an
 
 ```bash
 cd server && go test ./...    # Run all Go tests
+cd webapp && npm test         # Run webapp unit tests (node --test)
 cd webapp && npm run dev      # Webpack watch mode for frontend iteration
 ```
 
-Tests cover configuration validation, scope parsing, username sanitization, OIDC claim extraction, random key generation, and HMAC state signing/verification, and OIDC discovery retry on login. No integration tests exist.
+Tests cover configuration validation, scope parsing, username sanitization, OIDC claim extraction, random key generation, and HMAC state signing/verification, and OIDC discovery retry on login. Webapp tests cover the desktop code redemption flow and the core sign-in availability mirror. No integration tests exist.
 
 ## Local Development Environment
 
@@ -44,14 +45,15 @@ docker-compose -f docker-compose.dev.yml up -d
 
 **Mobile bridge (Go):** `mobile-bridge/` is an optional, standalone reverse-proxy shim (separate `go.mod`, own `main.go`, `Dockerfile`, `README.md`) that enables native-app OIDC login on servers without the built-in OpenID provider. It is **not** part of the plugin bundle. It sits in the ingress and intercepts two paths: `/api/v4/config/client` (via an `httputil.ReverseProxy` + `ModifyResponse` hook; injects `EnableSignUpWithOpenId=true` for mobile UAs only — **and only when the plugin's public config reports `enable=true`**, so the app never shows a button that dead-ends) and `/oauth/openid/mobile_login` (302-redirects into the plugin's `/oauth2/connect?mobile_redirect=…`). Everything else passes through to Mattermost untouched (web/desktop responses stream through with their original encoding). Button text/color default to values pulled from the plugin's public config (`enable`/button fields cached ~60s). Covered by `mobile-bridge/main_test.go`. Configured via env vars (`UPSTREAM`, `LISTEN`, `MOBILE_UA_MATCH`, `OPENID_BUTTON_TEXT`/`COLOR`, …). See `mobile-bridge/README.md` for ingress wiring (nginx/Traefik/Caddy) and the licensing caveat. The `docker-compose.dev.yml` includes the bridge for local testing.
 
-**Webapp (React):** Single file `webapp/src/index.js` exporting a Mattermost plugin class:
-- `OIDCLoginButton` component fetches public config from `/api/v1/config` and renders a styled login button
-- Uses `registerCustomLoginButtonComponent` (Mattermost 7.8+) with DOM injection fallback via MutationObserver for older versions
+**Webapp (React):** `webapp/src/index.js` exports the Mattermost plugin class, with helpers in `webapp/src/desktop_login.js` and `webapp/src/core_login_state.js`:
+- `OIDCLoginButton` component fetches public config from `/api/v1/config` (via a shared, cached loader) and renders a styled login button
+- Injects the button into the login page via DOM manipulation (MutationObserver) — there is no registry hook: `registerCustomLoginButtonComponent` does not exist in any Mattermost release (verified across v7–v12), so the takeover below always runs through this path
+- When neither email nor username sign-in is enabled, core's `login.tsx` renders no login card but the `login.noMethods` error screen (`ColumnLayout`, `.content-layout-column`), leaving the injected button without a host. The injection therefore additionally detects that screen on `/login` — gated on the plugin's config being enabled and on `coreSignInAvailable()` (`core_login_state.js`), a version-agnostic mirror of core's `enableBaseLogin`/`enableExternalSignup` formula evaluated against the client config and license from the app's Redux store — hides the error block via `display:none` (never removing React-owned nodes) and mounts the button into a sibling card reusing core's `login-body-card` classes. Covers browser and desktop app; reverts automatically if core's card (re)appears.
 - Built with Webpack 5 as UMD bundle, React provided as external by Mattermost
 
 **OAuth2 flow:** Connect endpoint **re-runs OIDC discovery if it failed at activation (one attempt at a time, at most one per 10 s; `initOIDCProvider` discards a result whose configuration changed during discovery)**, generates HMAC-signed state stored in KV with 10-min expiry **and sets it in a browser-bound `MMOIDCSTATE` cookie** (HttpOnly, SameSite=Lax), sends **PKCE S256** and an OIDC **nonce** on the authorization redirect → redirects to OIDC provider → callback validates state signature/expiry, **and for web requires the `MMOIDCSTATE` cookie to match the state token (login-CSRF protection; the mobile and desktop flows are exempt — desktop is bound by the verifier at redeem)** → exchanges code for tokens (with `code_verifier`) → verifies ID token via JWKS and checks the nonce claim → extracts claims using configurable claim mappings (including optional `email_verified` sync to the Mattermost user's `EmailVerified` field; optional `RequireEmailVerified` rejects login when the claim is absent or false) → creates/links/updates Mattermost user → **web:** sets MMAUTHTOKEN session cookie and 302-redirects; **desktop** (state carries `DesktopChallenge`; no cookie check, no session in the system browser): renders an HTML redirect to the app's `mattermost://` deep link with a one-time code, redeemed with the app's verifier via `POST /oauth2/callback`; **mobile** (state carries a valid `MobileRedirect`): renders an HTML auto-redirect to the app's custom URL scheme (`mmauth://callback?MMAUTHTOKEN=…&MMCSRF=…`) instead of the cookie.
 
-**Plugin settings** are defined in `plugin.json` (17 settings) and managed through the Mattermost System Console. The `EncryptionKey` for state signing is auto-generated on first activation.
+**Plugin settings** are defined in `plugin.json` (17 settings) and managed through the Mattermost System Console. The `EncryptionKey` for state signing is auto-generated on first activation. The OIDC `ClientSecret` setting can be overridden by the `MM_OIDC_CLIENT_SECRET` environment variable of the Mattermost server process (read at activation and on configuration change; non-empty value wins).
 
 ## CI
 

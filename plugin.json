@@ -4,7 +4,7 @@
     "description": "OpenID Connect (OIDC) authentication plugin for Mostlymatter/Mattermost. Enables SSO login via any standard OIDC provider (Keycloak, Authentik, Authelia, Dex, etc.) without requiring an Enterprise license.",
     "homepage_url": "https://server.camp",
     "icon_path": "assets/oidc-icon.svg",
-    "version": "0.7.0",
+    "version": "0.7.2",
     "min_server_version": "9.0.0",
     "server": {
         "executables": {
@@ -15,7 +15,8 @@
         }
     },
     "webapp": {
-        "bundle_path": "webapp/dist/main.js"
+        "bundle_path": "webapp/dist/main.js",
+        "pre_auth": true
     },
     "settings_schema": {
         "header": "Configure OpenID Connect (OIDC) authentication for your Mattermost / Mostlymatter instance. This plugin enables SSO login via any standard OIDC-compliant provider.",
@@ -48,7 +49,7 @@
                 "key": "ClientSecret",
                 "display_name": "Client Secret",
                 "type": "text",
-                "help_text": "The OAuth 2.0 Client Secret registered with your OIDC provider.",
+                "help_text": "The OAuth 2.0 Client Secret registered with your OIDC provider. Can be overridden by setting the MM_OIDC_CLIENT_SECRET environment variable on the Mattermost server; leave this field empty to keep the secret out of the plugin configuration entirely.",
                 "default": "",
                 "placeholder": "your-client-secret",
                 "secret": true

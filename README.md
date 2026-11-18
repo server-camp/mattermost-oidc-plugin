@@ -145,6 +145,20 @@ When **Auto-Link Existing Accounts by Email** is enabled, consider also enabling
 
 Usernames are set when an account is created. With **Update Usernames on Login** enabled, a username changed at the identity provider reaches Mattermost the next time that person logs in, as it does for Mattermost's built-in OAuth providers. The account keeps its current name, and the server log records why, when the new name is taken by another account or is not a valid Mattermost username (reserved names such as `system` and `all` are refused). An account created as `joe_ab12cd` because `joe` was taken keeps that name until `joe` is free. If the provider does not send the username claim, the name derived from the email address is never applied to existing accounts. Mattermost sends its usual username-change email.
 
+#### Client secret from the environment
+
+Instead of storing the client secret in the plugin configuration, set the
+`MM_OIDC_CLIENT_SECRET` environment variable on the Mattermost server process, e.g.
+inject it from a Kubernetes Secret using `env.valueFrom.secretKeyRef` or from a Compose
+env file. A non-empty value of this variable takes precedence over the **Client Secret**
+setting. Leave the setting empty so the credential stays out of plugin settings and the
+System Console database entirely.
+
+The variable is read when the plugin starts and whenever the plugin configuration is
+saved, so a server restart (or saving any plugin setting) is required after changing it.
+In high-availability deployments, set it on every Mattermost app node, including job
+servers. The plugin only keeps the resolved secret in memory for OAuth2 requests.
+
 #### Desktop app
 
 The Mattermost Desktop app signs in through the system browser and returns to the app via `mattermost://`. This requires that:
@@ -228,6 +242,9 @@ The plugin side handles the mobile callback by handing the session token back to
 
 **Login button not visible**
 → Enable the plugin in the System Console, clear browser cache
+
+**Login page shows "This server doesn't have any sign-in methods enabled" without an OIDC button**
+→ The plugin's login card takeover needs the plugin to be enabled with a valid configuration (check the server logs) and its webapp bundle to load before login.
 
 **"failed to create user"**
 → Check that auto-create is enabled and that the username doesn't already exist

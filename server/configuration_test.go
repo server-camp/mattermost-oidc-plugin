@@ -1,6 +1,7 @@
 package main
 
 import (
+	"os"
 	"testing"
 )
 
@@ -240,5 +241,48 @@ func TestConfigurationClone(t *testing.T) {
 	}
 	if original.PositionClaim != "position" {
 		t.Error("Clone modified the original configuration PositionClaim")
+	}
+}
+
+func TestClientSecretEnvironment(t *testing.T) {
+	for _, tc := range []struct {
+		name, stored, envValue string
+		envSet                 bool
+		want                   string
+		wantErr                bool
+	}{
+		{name: "stored secret", stored: "stored", want: "stored"},
+		{name: "environment only", envSet: true, envValue: "from-env", want: "from-env"},
+		{name: "environment overrides stored", stored: "stored", envSet: true, envValue: "from-env", want: "from-env"},
+		{name: "empty environment falls back to stored", stored: "stored", envSet: true, want: "stored"},
+		{name: "missing secret", wantErr: true},
+		{name: "preserve secret whitespace", envSet: true, envValue: " secret\n", want: " secret\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.envSet {
+				t.Setenv(clientSecretEnvVar, tc.envValue)
+			} else {
+				t.Setenv(clientSecretEnvVar, "")
+				if err := os.Unsetenv(clientSecretEnvVar); err != nil {
+					t.Fatal(err)
+				}
+			}
+			cfg := Configuration{Enable: true, IssuerURL: "https://idp.example.com", ClientID: "client", ClientSecret: tc.stored}
+			got, err := cfg.getClientSecret()
+			if (err != nil) != tc.wantErr || got != tc.want {
+				t.Fatalf("getClientSecret() = %q, %v, want %q, error %v", got, err, tc.want, tc.wantErr)
+			}
+			if err := cfg.IsValid(); (err != nil) != tc.wantErr {
+				t.Fatalf("IsValid() = %v, want error %v", err, tc.wantErr)
+			}
+			if cfg.ClientSecret != tc.stored {
+				t.Fatal("environment resolution changed the stored secret")
+			}
+		})
+	}
+	t.Setenv(clientSecretEnvVar, "")
+	cfg := Configuration{IssuerURL: "https://idp.example.com", ClientID: "client"}
+	if err := cfg.IsValid(); err != nil {
+		t.Fatalf("disabled plugin rejected missing secret: %v", err)
 	}
 }

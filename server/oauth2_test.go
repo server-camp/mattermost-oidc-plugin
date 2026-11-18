@@ -1203,3 +1203,55 @@ func TestOnActivateAndConfigChangeDoNotRedundantlyInitProvider(t *testing.T) {
 		t.Fatalf("discovery hits after changed OnConfigurationChange = %d, want 2", got)
 	}
 }
+
+func TestClientSecretEnvironmentLifecycle(t *testing.T) {
+	t.Setenv(clientSecretEnvVar, "environment-secret")
+	var up atomic.Bool
+	var hits atomic.Int32
+	p, issuer := newDiscoveryTestPlugin(t, &up, &hits, nil)
+	up.Store(true)
+	cfg := Configuration{Enable: true, IssuerURL: issuer, ClientID: "mattermost"}
+	api := p.API.(quietAPI).API
+	api.On("KVGet", kvEncryptionKey).Return([]byte("test-key"), nil)
+	api.On("LoadPluginConfiguration", mock.Anything).Run(func(args mock.Arguments) {
+		*args.Get(0).(*Configuration) = cfg
+	}).Return(nil)
+	if err := p.OnConfigurationChange(); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.OnActivate(); err != nil {
+		t.Fatal(err)
+	}
+	if got := p.getOAuthConfig(); got == nil || got.ClientSecret != "environment-secret" {
+		t.Fatal("OAuth2 configuration did not use the environment secret")
+	}
+	if p.getConfiguration().ClientSecret != "" || cfg.ClientSecret != "" {
+		t.Fatal("environment secret leaked into plugin settings")
+	}
+	rec := httptest.NewRecorder()
+	p.router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/config", nil))
+	if strings.Contains(rec.Body.String(), "environment-secret") {
+		t.Fatal("public configuration exposed the secret")
+	}
+	// Removing the environment variable (without a stored secret) invalidates the
+	// configuration on the next reload and fails closed.
+	t.Setenv(clientSecretEnvVar, "")
+	cfg.ButtonText = "Log in with SSO"
+	if err := p.OnConfigurationChange(); err != nil {
+		t.Fatal(err)
+	}
+	if p.getOAuthConfig() != nil {
+		t.Fatal("missing environment secret retained the old OAuth2 configuration")
+	}
+	if hits.Load() != 1 {
+		t.Fatalf("invalid settings triggered discovery: got %d calls, want 1", hits.Load())
+	}
+	// With the variable gone, the stored setting is used again.
+	cfg.ClientSecret = "stored-secret"
+	if err := p.OnConfigurationChange(); err != nil {
+		t.Fatal(err)
+	}
+	if got := p.getOAuthConfig(); got == nil || got.ClientSecret != "stored-secret" {
+		t.Fatal("OAuth2 configuration did not fall back to the stored secret")
+	}
+}

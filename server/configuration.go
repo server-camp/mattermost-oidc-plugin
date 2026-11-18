@@ -2,9 +2,16 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"slices"
 	"strings"
 )
+
+// clientSecretEnvVar is the fixed name of an environment variable of the Mattermost
+// server process. When it is set to a non-empty value it overrides the ClientSecret
+// setting, so the credential can be kept out of the plugin configuration entirely
+// (e.g. injected from a Kubernetes Secret or a docker env file).
+const clientSecretEnvVar = "MM_OIDC_CLIENT_SECRET"
 
 // Configuration holds the plugin's settings from the System Console.
 type Configuration struct {
@@ -43,8 +50,8 @@ func (c *Configuration) IsValid() error {
 	if c.ClientID == "" {
 		return fmt.Errorf("client ID is required")
 	}
-	if c.ClientSecret == "" {
-		return fmt.Errorf("client secret is required")
+	if _, err := c.getClientSecret(); err != nil {
+		return err
 	}
 
 	scopes := c.GetScopes()
@@ -57,6 +64,19 @@ func (c *Configuration) IsValid() error {
 	}
 
 	return nil
+}
+
+// getClientSecret resolves the secret without copying it into the saved settings:
+// the MM_OIDC_CLIENT_SECRET environment variable wins when non-empty, otherwise the
+// ClientSecret setting is used.
+func (c *Configuration) getClientSecret() (string, error) {
+	if secret := os.Getenv(clientSecretEnvVar); secret != "" {
+		return secret, nil
+	}
+	if c.ClientSecret == "" {
+		return "", fmt.Errorf("client secret is required")
+	}
+	return c.ClientSecret, nil
 }
 
 // GetScopes parses the space-separated scopes string into a slice.
