@@ -28,10 +28,10 @@ const (
 
 	// oidcStateCookie holds the OAuth state token in the browser that started the
 	// flow. It is set at /oauth2/connect and required to match the state at
-	// /oauth2/callback (web/desktop), binding the flow to that browser. Without it,
+	// /oauth2/callback (web), binding the flow to that browser. Without it,
 	// an attacker could pre-generate a valid code+state for their own IdP account and
 	// feed the callback to a victim, silently logging the victim into the attacker's
-	// account (login CSRF). The mobile deep-link flow is exempt (see the callback).
+	// account (login CSRF). The mobile and desktop flows are exempt (see the callback).
 	oidcStateCookie = "MMOIDCSTATE"
 
 	// usernameExistsAppErrorID is the error ID returned by Mattermost when trying to save a user with an existing username.
@@ -50,14 +50,8 @@ type OAuthState struct {
 	// mode: instead of setting a session cookie, the token is handed back to the
 	// app via the deep link, mirroring core's /oauth/<service>/mobile_login flow.
 	MobileRedirect string `json:"mobile_redirect,omitempty"`
-	// Popup, when true, marks a login started from a popup window (window.open)
-	// rather than a full-page navigation. The webapp uses this on the Mattermost
-	// Desktop app, whose main window hard-blocks navigation to an external IdP but
-	// renders a plugin-URL popup in a trusted, session-sharing window that *does*
-	// permit it. In this mode the callback still sets the session cookie (shared
-	// with the opener) but, instead of a 302, renders an HTML page that closes the
-	// popup and navigates the opener to the return path.
-	Popup bool `json:"popup,omitempty"`
+	// DesktopChallenge is the PKCE-style challenge of the Desktop app that started a system-browser login.
+	DesktopChallenge string `json:"desktop_challenge,omitempty"`
 	// CodeVerifier is the PKCE S256 verifier (RFC 7636). Stored in KV, never in the URL state parameter.
 	CodeVerifier string `json:"code_verifier,omitempty"`
 	// Nonce is sent on the authorization request and must match the ID token
@@ -93,10 +87,11 @@ type OIDCUserInfo struct {
 	LastName      string `json:"last_name"`
 	Position      string `json:"position,omitempty"`
 	EmailVerified *bool  `json:"email_verified,omitempty"`
+	// UsernameFromClaim is false when Username was derived from the email address.
+	UsernameFromClaim bool `json:"-"`
 }
 
-// handleOAuth2Connect initiates the OIDC login flow by redirecting the user
-// to the identity provider's authorization endpoint.
+// handleOAuth2Connect initiates the OIDC login flow by redirecting the user to the identity provider's authorization endpoint.
 func (p *Plugin) handleOAuth2Connect(w http.ResponseWriter, r *http.Request) {
 	config := p.getConfiguration()
 	if !config.Enable {
@@ -104,6 +99,7 @@ func (p *Plugin) handleOAuth2Connect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	p.retryOIDCProvider()
 	oauthConfig := p.getOAuthConfig()
 	if oauthConfig == nil {
 		http.Error(w, "OIDC provider not initialized. Check plugin configuration.", http.StatusInternalServerError)
@@ -122,10 +118,7 @@ func (p *Plugin) handleOAuth2Connect(w http.ResponseWriter, r *http.Request) {
 	signedState := p.signState(stateToken)
 
 	// Store state in KV with expiry information
-	returnTo := r.URL.Query().Get("return_to")
-	if returnTo == "" || !strings.HasPrefix(returnTo, "/") || strings.HasPrefix(returnTo, "//") || strings.ContainsRune(returnTo, '\\') {
-		returnTo = "/"
-	}
+	returnTo := safeReturnTo(r.URL.Query().Get("return_to"))
 
 	// Mobile login: the native app reaches this endpoint (via the front proxy
 	// rewriting /oauth/openid/mobile_login) and passes its custom-scheme callback
@@ -136,9 +129,11 @@ func (p *Plugin) handleOAuth2Connect(w http.ResponseWriter, r *http.Request) {
 		mobileRedirect = ""
 	}
 
-	// Popup mode is only meaningful for the (cookie-based) web/desktop flow, so it
-	// is ignored when a mobile redirect is present.
-	popup := mobileRedirect == "" && r.URL.Query().Get("popup") == "1"
+	desktopChallenge := r.URL.Query().Get("desktop_challenge")
+	if desktopChallenge != "" && (!desktopChallengeRe.MatchString(desktopChallenge) || mobileRedirect != "") {
+		http.Error(w, "Invalid desktop_challenge", http.StatusBadRequest)
+		return
+	}
 
 	nonce, err := generateRandomKey(16)
 	if err != nil {
@@ -148,12 +143,12 @@ func (p *Plugin) handleOAuth2Connect(w http.ResponseWriter, r *http.Request) {
 	}
 
 	state := OAuthState{
-		Token:          stateToken,
-		CreateAt:       time.Now().UnixMilli(),
-		ReturnTo:       returnTo,
-		MobileRedirect: mobileRedirect,
-		Popup:          popup,
-		Nonce:          nonce,
+		Token:            stateToken,
+		CreateAt:         time.Now().UnixMilli(),
+		ReturnTo:         returnTo,
+		MobileRedirect:   mobileRedirect,
+		DesktopChallenge: desktopChallenge,
+		Nonce:            nonce,
 	}
 
 	authOpts := []oauth2.AuthCodeOption{
@@ -178,15 +173,39 @@ func (p *Plugin) handleOAuth2Connect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Bind this flow to the initiating browser: the callback (web/desktop) requires a
-	// cookie matching this state token, so a code+state pre-generated by an attacker
-	// cannot be replayed into a victim's browser (login CSRF). Set before the redirect
-	// so the header is written first.
-	p.setStateCookie(w, stateToken)
-
-	// Redirect to the OIDC provider
 	authURL := oauthConfig.AuthCodeURL(signedState, authOpts...)
+
+	// Desktop: the app fetches the URL and opens it in the system browser, so there is no browser cookie to bind.
+	if desktopChallenge != "" {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Cache-Control", "no-store")
+		_ = json.NewEncoder(w).Encode(map[string]string{"authorize_url": authURL})
+		return
+	}
+
+	// Bind this flow to the initiating browser: the callback (web) requires a
+	// cookie matching this state token, so a code+state pre-generated by an attacker
+	// cannot be replayed into a victim's browser (login CSRF).
+	p.setStateCookie(w, stateToken)
 	http.Redirect(w, r, authURL, http.StatusFound)
+}
+
+var errKVGone = errors.New("not found or already consumed")
+
+// consumeKV returns the value stored under key and deletes it atomically, so only the first of concurrent callers succeeds.
+func (p *Plugin) consumeKV(key string) ([]byte, error) {
+	value, appErr := p.API.KVGet(key)
+	if appErr != nil || value == nil {
+		return nil, errKVGone
+	}
+	deleted, appErr := p.API.KVCompareAndDelete(key, value)
+	if appErr != nil {
+		return nil, appErr
+	}
+	if !deleted {
+		return nil, errKVGone
+	}
+	return value, nil
 }
 
 // handleOAuth2Callback processes the callback from the OIDC provider after
@@ -217,25 +236,14 @@ func (p *Plugin) handleOAuth2Callback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Retrieve and atomically consume state from KV.
-	// KVCompareAndDelete ensures only the first concurrent callback wins;
-	// a second request with the same state token gets deleted=false and is rejected.
-	kvKey := KVOAuthStatePrefix + stateToken
-	stateBytes, appErr := p.API.KVGet(kvKey)
-	if appErr != nil || stateBytes == nil {
-		p.API.LogError("OAuth state not found or expired")
-		p.renderError(w, "Authentication session expired. Please try again.")
-		return
-	}
-	deleted, delErr := p.API.KVCompareAndDelete(kvKey, stateBytes)
-	if delErr != nil {
-		p.API.LogError("Failed to consume OAuth state from KV", "key", kvKey, "error", delErr.Error())
-		p.renderError(w, "Internal error")
-		return
-	}
-	if !deleted {
-		p.API.LogWarn("OAuth state already consumed — possible replay attempt", "key", kvKey)
-		p.renderError(w, "Authentication session expired. Please try again.")
+	stateBytes, err := p.consumeKV(KVOAuthStatePrefix + stateToken)
+	if err != nil {
+		p.API.LogWarn("OAuth state rejected", "error", err.Error())
+		if errors.Is(err, errKVGone) {
+			p.renderError(w, "Authentication session expired. Please try again.")
+		} else {
+			p.renderError(w, "Internal error")
+		}
 		return
 	}
 
@@ -252,12 +260,15 @@ func (p *Plugin) handleOAuth2Callback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Login-CSRF protection (web/desktop): the browser finishing the flow must be the
+	isMobile := state.MobileRedirect != ""
+	isDesktop := state.DesktopChallenge != ""
+
+	// Login-CSRF protection (web): the browser finishing the flow must be the
 	// one that started it, proven by the state cookie set at connect. The mobile
 	// deep-link flow is exempt — the token is handed straight to the app rather than
 	// via a shared browser session, and its in-app auth session may not round-trip the
 	// cookie. Reject before the token exchange to avoid needless work.
-	if state.MobileRedirect == "" {
+	if !isMobile && !isDesktop {
 		if !stateCookieMatches(r, stateToken) {
 			p.API.LogWarn("OAuth state cookie missing or mismatched — possible login CSRF")
 			p.clearStateCookie(w)
@@ -362,11 +373,39 @@ func (p *Plugin) handleOAuth2Callback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Create a user session with expiry from Mattermost config.
-	// Mobile logins use the (typically longer) mobile session length.
-	mmConfig := p.API.GetConfig()
-	isMobile := state.MobileRedirect != ""
+	// No session here; the app redeems the code with its verifier.
+	if isDesktop {
+		p.issueDesktopCode(w, &state, mmUser)
+		return
+	}
 
+	session, csrfToken, appErr := p.createLoginSession(r, mmUser, isMobile)
+	if appErr != nil {
+		p.API.LogError("Failed to create session", "error", appErr.Error(), "user_id", mmUser.Id)
+		p.renderError(w, "Failed to create session. Please try again.")
+		return
+	}
+
+	// Mobile login: hand the session token back to the native app through its custom
+	// URL scheme, mirroring core's /oauth/<service>/mobile_login (token + CSRF appended
+	// to the deep link, delivered via an HTML auto-redirect page rather than a 302 —
+	// a custom-scheme navigation must originate from within the page).
+	if isMobile {
+		p.renderMobileAuthComplete(w, state.MobileRedirect, session.Token, csrfToken)
+		return
+	}
+
+	siteURL := p.getSiteURL()
+	p.setSessionCookie(w, r, session, siteURL)
+
+	returnTo := safeReturnTo(state.ReturnTo)
+
+	http.Redirect(w, r, siteURL+returnTo, http.StatusFound)
+}
+
+// createLoginSession creates a Mattermost session for a user who completed OIDC login.
+func (p *Plugin) createLoginSession(r *http.Request, mmUser *model.User, isMobile bool) (*model.Session, string, *model.AppError) {
+	mmConfig := p.API.GetConfig()
 	sessionLengthHours := 720 // fallback: 30 days
 	if mmConfig != nil {
 		if isMobile && mmConfig.ServiceSettings.SessionLengthMobileInHours != nil {
@@ -406,103 +445,9 @@ func (p *Plugin) handleOAuth2Callback(w http.ResponseWriter, r *http.Request) {
 		},
 	})
 	if appErr != nil {
-		p.API.LogError("Failed to create session", "error", appErr.Error(), "user_id", mmUser.Id)
-		p.renderError(w, "Failed to create session. Please try again.")
-		return
+		return nil, "", appErr
 	}
-
-	// Mobile login: hand the session token back to the native app through its custom
-	// URL scheme, mirroring core's /oauth/<service>/mobile_login (token + CSRF appended
-	// to the deep link, delivered via an HTML auto-redirect page rather than a 302 —
-	// a custom-scheme navigation must originate from within the page).
-	if isMobile {
-		p.renderMobileAuthComplete(w, state.MobileRedirect, session.Token, csrfToken)
-		return
-	}
-
-	// Web/desktop: set the session token cookie shared with the opener/main window.
-	siteURL := p.getSiteURL()
-	p.setSessionCookie(w, r, session, siteURL)
-
-	returnTo := state.ReturnTo
-	if returnTo == "" || !strings.HasPrefix(returnTo, "/") || strings.HasPrefix(returnTo, "//") || strings.ContainsRune(returnTo, '\\') {
-		returnTo = "/"
-	}
-
-	// Popup login (Desktop app / browser popup): a plain 302 would only navigate
-	// the popup itself, leaving the opener on the login page. Instead render a page
-	// that hands control back — it navigates the opener to returnTo and closes the
-	// popup, with a same-origin storage broadcast as a COOP-safe fallback.
-	if state.Popup {
-		p.renderPopupAuthComplete(w, siteURL, returnTo)
-		return
-	}
-
-	http.Redirect(w, r, siteURL+returnTo, http.StatusFound)
-}
-
-// renderPopupAuthComplete renders the HTML page shown in the popup window after a
-// successful web/desktop login. The session cookie has already been set on this
-// same response, so it is present in the origin's (shared) cookie jar; this page's
-// only job is to move the *opener* to the logged-in app and dismiss the popup.
-//
-// It moves the opener two ways (both harmless if both land):
-//  1. a same-origin localStorage write — reaches the opener via a `storage` event
-//     even when COOP severed window.opener after the cross-origin IdP round-trip
-//     (this is the case in the Desktop app).
-//  2. window.opener.location — direct, for when the opener reference survives.
-//
-// It then closes the popup. It deliberately does NOT navigate the popup itself to
-// the app: this page is only ever reached from the webapp's `window.open` flow, so
-// the opener (the login page) always carries the storage listener — self-navigating
-// would just leave a confusing second logged-in window open. If the browser refuses
-// to close a script-opened window, the static "you can close this window" text
-// remains visible with a manual link as an escape hatch.
-func (p *Plugin) renderPopupAuthComplete(w http.ResponseWriter, siteURL, returnTo string) {
-	target := siteURL + returnTo
-
-	// Encode the target as a JS string literal. encoding/json escapes <, >, & to
-	// </>/& by default, so the value is safe to embed inside <script>
-	// even though returnTo originates from a request parameter. Marshalling a string
-	// never fails.
-	targetJS, _ := json.Marshal(target)
-
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate, private")
-	w.Header().Set("Pragma", "no-cache")
-	w.Header().Set("Referrer-Policy", "no-referrer")
-	w.WriteHeader(http.StatusOK)
-	_, _ = fmt.Fprintf(w, `<!DOCTYPE html>
-<html>
-<head>
-	<meta charset="utf-8">
-	<meta name="viewport" content="width=device-width, initial-scale=1.0">
-	<title>Authentication complete</title>
-</head>
-<body style="font-family: sans-serif; max-width: 600px; margin: 50px auto; text-align: center;">
-	<h2>Authentication complete</h2>
-	<p>You are logged in. You can close this window.</p>
-	<p><a href="%s">Open Mattermost here</a></p>
-	<script>
-	(function () {
-		var target = %s;
-		// Tell the opener (the login page, which carries a matching storage listener)
-		// to proceed. A same-origin storage event reaches it even when window.opener
-		// was severed by COOP after the cross-origin IdP round-trip (Desktop app).
-		try { window.localStorage.setItem('mattermost_oidc_login', String(new Date().getTime())); } catch (e) {}
-		// Also move the opener directly when the reference survives (harmless duplicate).
-		try {
-			if (window.opener && !window.opener.closed) {
-				window.opener.location = target;
-			}
-		} catch (e) {}
-		// Dismiss this popup. Do NOT navigate it into the app — that would leave a
-		// second logged-in window open (the bug this replaced).
-		try { window.close(); } catch (e) {}
-	})();
-	</script>
-</body>
-</html>`, html.EscapeString(target), targetJS)
+	return session, csrfToken, nil
 }
 
 // renderMobileAuthComplete renders an HTML page that redirects the in-app browser to the
@@ -522,10 +467,12 @@ func (p *Plugin) renderMobileAuthComplete(w http.ResponseWriter, redirectTo, tok
 	q.Set(model.SessionCookieToken, token) // MMAUTHTOKEN
 	q.Set(model.SessionCookieCsrf, csrf)   // MMCSRF
 	u.RawQuery = q.Encode()
-	link := u.String()
+	p.renderAppRedirect(w, u.String())
+}
 
-	// This page carries the session token + CSRF in the deep-link URL. Prevent any
-	// caching and referrer leakage of those secrets.
+// renderAppRedirect renders a page that sends the browser to the app's custom URL scheme; a custom-scheme navigation has to come from the page (meta refresh / link), not an HTTP 302.
+func (p *Plugin) renderAppRedirect(w http.ResponseWriter, link string) {
+	// The link may carry secrets: prevent caching and referrer leakage.
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate, private")
 	w.Header().Set("Pragma", "no-cache")
@@ -589,6 +536,7 @@ func (p *Plugin) extractUserInfo(ctx context.Context, idToken *oidc.IDToken, oau
 	}
 
 	// Fallback: use email prefix as username if no username claim found
+	info.UsernameFromClaim = info.Username != ""
 	if info.Username == "" && info.Email != "" {
 		parts := strings.SplitN(info.Email, "@", 2)
 		info.Username = parts[0]
@@ -735,26 +683,49 @@ func (p *Plugin) updateUserIfChanged(user *model.User, info *OIDCUserInfo) (*mod
 		changed = true
 	}
 
+	if changed {
+		updatedUser, appErr := p.API.UpdateUser(user)
+		if appErr != nil {
+			return nil, fmt.Errorf("failed to update user: %s", appErr.Error())
+		}
+		user = updatedUser
+	}
+
 	if p.getConfiguration().AutoUpdateUsername {
-		if info.Username != "" && user.Username != info.Username {
-			user.Username = info.Username
-			changed = true
-			usernameChanged = true
-		}
+		user = p.updateUsername(user, info)
+	}
+	return user, nil
+}
+
+// updateUsername renames the user to the username claim, as core does for its OAuth providers.
+// It never fails the login: a name that is invalid or held by another account is kept and logged.
+func (p *Plugin) updateUsername(user *model.User, info *OIDCUserInfo) *model.User {
+	if !info.UsernameFromClaim || user.Username == info.Username {
+		return user
 	}
 
-	if !changed {
-		return user, nil
+	if !model.IsValidUsername(info.Username) {
+		p.API.LogWarn("Keeping username: the OIDC username is not a valid Mattermost username",
+			"user_id", user.Id, "username", user.Username, "oidc_username", info.Username)
+		return user
+	}
+	if existing, _ := p.API.GetUserByUsername(info.Username); existing != nil {
+		p.API.LogWarn("Keeping username: the OIDC username belongs to another account",
+			"user_id", user.Id, "username", user.Username, "oidc_username", info.Username, "other_user_id", existing.Id)
+		return user
 	}
 
-	updatedUser, appErr := p.API.UpdateUser(user)
+	renamed := *user
+	renamed.Username = info.Username
+	updatedUser, appErr := p.API.UpdateUser(&renamed)
 	if appErr != nil {
-		if usernameChanged && appErr.Id == usernameExistsAppErrorID {
-			return nil, fmt.Errorf("%w: %s", errUsernameConflict, user.Username)
-		}
-		return nil, fmt.Errorf("failed to update user: %s", appErr.Error())
+		p.API.LogWarn("Keeping username: the rename failed",
+			"user_id", user.Id, "username", user.Username, "oidc_username", info.Username, "error", appErr.Error())
+		return user
 	}
-	return updatedUser, nil
+
+	p.API.LogInfo("Updated username from OIDC", "user_id", user.Id, "old_username", user.Username, "username", updatedUser.Username)
+	return updatedUser
 }
 
 // handleGetPublicConfig returns the publicly visible configuration (button text/color, enable status).
@@ -762,7 +733,7 @@ func (p *Plugin) handleGetPublicConfig(w http.ResponseWriter, r *http.Request) {
 	config := p.getConfiguration()
 
 	publicConfig := map[string]interface{}{
-		"enable":       config.Enable,
+		"enable":       config.Enable && config.IsValid() == nil,
 		"button_text":  config.ButtonText,
 		"button_color": config.ButtonColor,
 	}
@@ -979,4 +950,12 @@ func nonceMatches(expected, got string) bool {
 		return false
 	}
 	return hmac.Equal([]byte(expected), []byte(got))
+}
+
+// safeReturnTo returns path if it is a same-origin relative path, otherwise "/".
+func safeReturnTo(path string) string {
+	if !strings.HasPrefix(path, "/") || strings.HasPrefix(path, "//") || strings.ContainsRune(path, '\\') {
+		return "/"
+	}
+	return path
 }

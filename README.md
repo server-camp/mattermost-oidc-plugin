@@ -138,9 +138,20 @@ Go to **System Console → Plugins → OIDC Authentication**:
 | **Require Email Verified**               | Reject login if claim is not true | `false`                                               |
 | **Auto-Create Accounts**                 | Automatically create new accounts | `true`                                                |
 | **Auto-Link Existing Accounts by Email** | Link existing accounts by email   | `false`                                               |
+| **Update Usernames on Login**            | Rename to the username claim      | `false`                                               |
 | **Default Team**                         | Team slug for new users           | `main`                                                |
 
 When **Auto-Link Existing Accounts by Email** is enabled, consider also enabling **Require Email Verified** after setting **Email Verified Claim** to `email_verified` (or your provider's claim name) if your identity provider sends that claim. This prevents linking to an existing account via an unverified email address.
+
+Usernames are set when an account is created. With **Update Usernames on Login** enabled, a username changed at the identity provider reaches Mattermost the next time that person logs in, as it does for Mattermost's built-in OAuth providers. The account keeps its current name, and the server log records why, when the new name is taken by another account or is not a valid Mattermost username (reserved names such as `system` and `all` are refused). An account created as `joe_ab12cd` because `joe` was taken keeps that name until `joe` is free. If the provider does not send the username claim, the name derived from the email address is never applied to existing accounts. Mattermost sends its usual username-change email.
+
+#### Desktop app
+
+The Mattermost Desktop app signs in through the system browser and returns to the app via `mattermost://`. This requires that:
+
+- the app's server URL equals the configured `SiteURL`,
+- `mattermost://` is registered for the app, and
+- the identity provider is not served from the `SiteURL` origin.
 
 ### 3. Restart the server
 
@@ -171,32 +182,6 @@ After saving, the Mattermost / Mostlymatter server must be restarted.
    https://sso.example.com/application/o/mostlymatter/.well-known/openid-configuration
 
 Note that Authentik doesn't have a `family_name` claim. Mattermost optimistically skips parsing the family name if not present.
-
-## Project Structure
-
-```
-mattermost-oidc-plugin/
-├── plugin.json              # Plugin manifest and settings schema
-├── Makefile                 # Build system
-├── README.md                # This file
-├── assets/
-│   └── oidc-icon.svg        # Plugin icon
-├── server/
-│   ├── go.mod               # Go module definition
-│   ├── main.go              # Entry point
-│   ├── plugin.go            # Plugin struct, lifecycle, router
-│   ├── configuration.go     # Configuration type and validation
-│   └── oauth2.go            # OIDC/OAuth2 flow handlers
-├── webapp/
-│   ├── package.json         # Node dependencies
-│   ├── webpack.config.js    # Webpack configuration
-│   └── src/
-│       └── index.js         # Login button React component
-└── mobile-bridge/           # Optional reverse-proxy shim for native mobile app
-    ├── main.go              # Shim: client-config injection + mobile_login redirect
-    ├── Dockerfile           # Container image for the shim
-    └── README.md            # Ingress wiring, env vars, test plan, troubleshooting
-```
 
 ## Security
 

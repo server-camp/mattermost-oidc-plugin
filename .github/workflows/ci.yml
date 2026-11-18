@@ -49,9 +49,11 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@v7
         with:
-          go-version: "1.26"
+          # Read the exact version from go.mod: mattermost/server/public pins a patch-level minimum and setup-go runs with GOTOOLCHAIN=local,
+          # so an open range like "1.26" resolving to an older 1.26.x breaks the build.
+          go-version-file: server/go.mod
           cache-dependency-path: server/go.sum
 
       - name: Test
@@ -69,9 +71,9 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@v7
         with:
-          go-version: "1.26"
+          go-version-file: mobile-bridge/go.mod
           cache: false # standalone module with no external dependencies
 
       - name: Vet & Test
@@ -86,9 +88,9 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@v7
         with:
-          go-version: "1.26"
+          go-version-file: server/go.mod  # see test-server for why
           cache-dependency-path: server/go.sum
 
       - uses: golangci/golangci-lint-action@v9
@@ -104,9 +106,9 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@v7
         with:
-          go-version: "1.26"
+          go-version-file: server/go.mod  # see test-server for why
           cache-dependency-path: server/go.sum
 
       - name: Build
@@ -147,6 +149,7 @@ jobs:
         working-directory: webapp
         run: |
           npm ci
+          npm test
           npm run build
 
       - uses: actions/upload-artifact@v7

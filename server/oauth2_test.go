@@ -6,11 +6,13 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin/plugintest"
 	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
 	"golang.org/x/oauth2"
 )
 
@@ -137,51 +139,6 @@ func TestStateSignAndVerify(t *testing.T) {
 	_, err = p.verifyAndExtractState("noseparator")
 	if err == nil {
 		t.Error("Malformed state should fail verification")
-	}
-}
-
-func TestRenderPopupAuthComplete(t *testing.T) {
-	p := &Plugin{}
-
-	rec := httptest.NewRecorder()
-	p.renderPopupAuthComplete(rec, "https://mm.example.com", "/team/channel")
-
-	res := rec.Result()
-	if res.StatusCode != 200 {
-		t.Fatalf("status = %d, want 200", res.StatusCode)
-	}
-	if cc := res.Header.Get("Cache-Control"); !strings.Contains(cc, "no-store") {
-		t.Errorf("Cache-Control = %q, want it to contain no-store", cc)
-	}
-
-	body := rec.Body.String()
-
-	// The target must be embedded as a safe JS string literal (json-encoded).
-	if !strings.Contains(body, `var target = "https://mm.example.com/team/channel"`) {
-		t.Errorf("body missing json-encoded target; got:\n%s", body)
-	}
-	// The popup hands control back to the opener and broadcasts via localStorage.
-	if !strings.Contains(body, "window.opener") {
-		t.Error("body should navigate window.opener")
-	}
-	if !strings.Contains(body, "mattermost_oidc_login") {
-		t.Error("body should broadcast completion via localStorage key")
-	}
-}
-
-// TestRenderPopupAuthCompleteNoScriptInjection ensures a return path crafted to
-// break out of the <script> block is neutralised by the json/HTML escaping.
-func TestRenderPopupAuthCompleteNoScriptInjection(t *testing.T) {
-	p := &Plugin{}
-
-	rec := httptest.NewRecorder()
-	// A hostile-looking path (it would already be rejected upstream, but the render
-	// must be safe regardless of what reaches it).
-	p.renderPopupAuthComplete(rec, "https://mm.example.com", `/x</script><script>alert(1)</script>`)
-
-	body := rec.Body.String()
-	if strings.Contains(body, "<script>alert(1)</script>") {
-		t.Errorf("unescaped </script> breakout present in body:\n%s", body)
 	}
 }
 
@@ -479,6 +436,171 @@ func TestUpdateUserIfChanged(t *testing.T) {
 	})
 }
 
+// recordingAPI keeps info and warning messages so tests can check what was logged.
+type recordingAPI struct {
+	*plugintest.API
+	infos, warns []string
+}
+
+func (a *recordingAPI) LogInfo(msg string, _ ...any) { a.infos = append(a.infos, msg) }
+func (a *recordingAPI) LogWarn(msg string, _ ...any) { a.warns = append(a.warns, msg) }
+
+func TestUpdateUsername(t *testing.T) {
+	setup := func(t *testing.T, enabled bool) (*Plugin, *recordingAPI) {
+		api := &recordingAPI{API: &plugintest.API{}}
+		t.Cleanup(func() { api.AssertExpectations(t) })
+		p := &Plugin{}
+		p.SetAPI(api)
+		p.setConfiguration(&Configuration{AutoUpdateUsername: enabled})
+		return p, api
+	}
+	user := func() *model.User {
+		return &model.User{Id: "user-1", Username: "joe_ab12cd", Email: "joe@example.com"}
+	}
+	claim := func(username string) *OIDCUserInfo {
+		return &OIDCUserInfo{Email: "joe@example.com", Username: username, UsernameFromClaim: true}
+	}
+	saved := func(firstName, username string) any {
+		return mock.MatchedBy(func(u *model.User) bool { return u.FirstName == firstName && u.Username == username })
+	}
+	echo := func(u *model.User) *model.User { return u }
+	notFound := model.NewAppError("GetUserByUsername", "app.user.get_by_username.app_error", nil, "", http.StatusNotFound)
+	otherJoe := &model.User{Id: "user-2", Username: "joe"}
+
+	t.Run("renames to a free username", func(t *testing.T) {
+		p, api := setup(t, true)
+		api.On("GetUserByUsername", "joe").Return(nil, notFound)
+		api.On("UpdateUser", saved("", "joe")).Return(echo, nil).Once()
+
+		updated, err := p.updateUserIfChanged(user(), claim("joe"))
+		require.NoError(t, err)
+		require.Equal(t, "joe", updated.Username)
+		require.Len(t, api.infos, 1)
+		require.Empty(t, api.warns)
+	})
+
+	t.Run("keeps a username held by another account", func(t *testing.T) {
+		p, api := setup(t, true)
+		api.On("GetUserByUsername", "joe").Return(otherJoe, nil)
+
+		updated, err := p.updateUserIfChanged(user(), claim("joe"))
+		require.NoError(t, err)
+		require.Equal(t, "joe_ab12cd", updated.Username)
+		require.Len(t, api.warns, 1)
+	})
+
+	t.Run("keeps the username when the claim is reserved", func(t *testing.T) {
+		p, api := setup(t, true)
+
+		updated, err := p.updateUserIfChanged(user(), claim("system"))
+		require.NoError(t, err)
+		require.Equal(t, "joe_ab12cd", updated.Username)
+		require.Len(t, api.warns, 1)
+	})
+
+	t.Run("keeps the username when the rename fails", func(t *testing.T) {
+		p, api := setup(t, true)
+		api.On("GetUserByUsername", "joe").Return(nil, notFound)
+		api.On("UpdateUser", saved("", "joe")).Return(nil, model.NewAppError("UpdateUser", "app.user.save.username_exists.app_error", nil, "", http.StatusBadRequest))
+
+		updated, err := p.updateUserIfChanged(user(), claim("joe"))
+		require.NoError(t, err)
+		require.Equal(t, "joe_ab12cd", updated.Username)
+		require.Len(t, api.warns, 1)
+	})
+
+	t.Run("updates the profile when the username is taken", func(t *testing.T) {
+		p, api := setup(t, true)
+		info := claim("joe")
+		info.FirstName = "Joe"
+		api.On("UpdateUser", saved("Joe", "joe_ab12cd")).Return(echo, nil).Once()
+		api.On("GetUserByUsername", "joe").Return(otherJoe, nil)
+
+		updated, err := p.updateUserIfChanged(user(), info)
+		require.NoError(t, err)
+		require.Equal(t, "Joe", updated.FirstName)
+		require.Equal(t, "joe_ab12cd", updated.Username)
+	})
+
+	t.Run("updates the profile and then the username", func(t *testing.T) {
+		p, api := setup(t, true)
+		info := claim("joe")
+		info.FirstName = "Joe"
+		api.On("UpdateUser", saved("Joe", "joe_ab12cd")).Return(echo, nil).Once()
+		api.On("GetUserByUsername", "joe").Return(nil, notFound)
+		api.On("UpdateUser", saved("Joe", "joe")).Return(echo, nil).Once()
+
+		updated, err := p.updateUserIfChanged(user(), info)
+		require.NoError(t, err)
+		require.Equal(t, "Joe", updated.FirstName)
+		require.Equal(t, "joe", updated.Username)
+	})
+
+	for _, tc := range []struct {
+		name               string
+		enabled, fromClaim bool
+		username           string
+	}{
+		{"the setting is off", false, true, "joe"},
+		{"the name came from the email address", true, false, "joe"},
+		{"the name already matches", true, true, "joe_ab12cd"},
+	} {
+		t.Run("leaves the username alone when "+tc.name, func(t *testing.T) {
+			p, api := setup(t, tc.enabled)
+			info := claim(tc.username)
+			info.UsernameFromClaim = tc.fromClaim
+
+			updated, err := p.updateUserIfChanged(user(), info)
+			require.NoError(t, err)
+			require.Equal(t, "joe_ab12cd", updated.Username)
+			require.Empty(t, api.warns)
+		})
+	}
+}
+
+func TestLoginUpdatesUsername(t *testing.T) {
+	newEnv := func(t *testing.T, username string, claims map[string]any) *loginEnv {
+		e := newLoginEnv(t, testSite)
+		cfg := e.p.getConfiguration()
+		cfg.AutoUpdateUsername = true
+		e.p.setConfiguration(cfg)
+		e.user.Username = username
+		e.claims = claims
+		return e
+	}
+	loggedIn := func(t *testing.T, e *loginEnv) {
+		rec := e.webLogin()
+		require.Equal(t, http.StatusFound, rec.Code, rec.Body.String())
+		require.Equal(t, testSite+"/", rec.Header().Get("Location"))
+		require.Equal(t, 1, e.sessionCount())
+	}
+
+	t.Run("renames to a free username", func(t *testing.T) {
+		e := newEnv(t, "alice", map[string]any{"preferred_username": "Alice.Smith"})
+		e.api.On("GetUserByUsername", "alice.smith").Return(nil, model.NewAppError("GetUserByUsername", "app.user.get_by_username.app_error", nil, "", http.StatusNotFound))
+		e.api.On("UpdateUser", mock.MatchedBy(func(u *model.User) bool { return u.Username == "alice.smith" })).Return(func(u *model.User) *model.User { return u }, nil).Once()
+
+		loggedIn(t, e)
+		e.api.AssertExpectations(t)
+	})
+
+	t.Run("logs in under the current name when the new one is taken", func(t *testing.T) {
+		e := newEnv(t, "alice_ab12cd", map[string]any{"preferred_username": "alice"})
+		e.api.On("GetUserByUsername", "alice").Return(&model.User{Id: "user-other-alice", Username: "alice"}, nil)
+
+		loggedIn(t, e)
+		e.api.AssertNotCalled(t, "UpdateUser", mock.Anything)
+	})
+
+	t.Run("never applies the name derived from the email address", func(t *testing.T) {
+		e := newEnv(t, "alice_ab12cd", nil)
+
+		loggedIn(t, e)
+		e.api.AssertNotCalled(t, "GetUserByUsername", mock.Anything)
+		e.api.AssertNotCalled(t, "UpdateUser", mock.Anything)
+	})
+}
+
 func TestNonceMatches(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -680,5 +802,404 @@ func TestGetCookiePath(t *testing.T) {
 		if got != tc.want {
 			t.Errorf("getCookiePath(%q) = %q, want %q", tc.siteURL, got, tc.want)
 		}
+	}
+}
+
+// quietAPI drops log calls, which plugintest.API would reject as unexpected.
+type quietAPI struct{ *plugintest.API }
+
+func (quietAPI) LogDebug(string, ...any) {}
+func (quietAPI) LogInfo(string, ...any)  {}
+func (quietAPI) LogWarn(string, ...any)  {}
+func (quietAPI) LogError(string, ...any) {}
+
+// newDiscoveryTestPlugin returns a plugin whose issuer answers discovery only while up is true; onRequest may be nil.
+func newDiscoveryTestPlugin(t *testing.T, up *atomic.Bool, hits *atomic.Int32, onRequest func()) (*Plugin, string) {
+	var issuer string
+
+	t.Helper()
+
+	idp := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		if onRequest != nil {
+			onRequest()
+		}
+		if !up.Load() {
+			http.Error(w, "down", http.StatusServiceUnavailable)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]string{
+			"issuer":                 issuer,
+			"authorization_endpoint": issuer + "/auth",
+			"token_endpoint":         issuer + "/token",
+			"jwks_uri":               issuer + "/certs",
+		})
+	}))
+	t.Cleanup(idp.Close)
+	issuer = idp.URL
+
+	api := &plugintest.API{}
+	api.On("GetConfig").Return(&model.Config{ServiceSettings: model.ServiceSettings{SiteURL: model.NewPointer("https://mm.example.com")}})
+	api.On("KVSetWithExpiry", mock.Anything, mock.Anything, mock.Anything).Return(nil)
+
+	p := &Plugin{encryptionKey: "test-key", discoveryClient: idp.Client()}
+	p.SetAPI(quietAPI{api})
+	p.setConfiguration(&Configuration{Enable: true, IssuerURL: issuer, ClientID: "mattermost", ClientSecret: "secret", Scopes: "openid"})
+	return p, issuer
+}
+
+func TestConnectRetriesFailedDiscovery(t *testing.T) {
+	var up atomic.Bool
+	var hits atomic.Int32
+	p, issuer := newDiscoveryTestPlugin(t, &up, &hits, nil)
+	if err := p.initOIDCProvider(); err == nil {
+		t.Fatal("discovery succeeded while the issuer was down")
+	}
+
+	up.Store(true)
+	rec := httptest.NewRecorder()
+	p.handleOAuth2Connect(rec, httptest.NewRequest(http.MethodGet, "/oauth2/connect", nil))
+
+	if rec.Code != http.StatusFound || !strings.HasPrefix(rec.Header().Get("Location"), issuer+"/auth?") {
+		t.Fatalf("got %d to %q, want a redirect to the issuer", rec.Code, rec.Header().Get("Location"))
+	}
+}
+
+func TestConnectRetriesDiscoveryAtMostOncePerInterval(t *testing.T) {
+	var up atomic.Bool
+	var hits atomic.Int32
+	p, _ := newDiscoveryTestPlugin(t, &up, &hits, nil)
+	_ = p.initOIDCProvider()
+
+	for range 3 {
+		rec := httptest.NewRecorder()
+		p.handleOAuth2Connect(rec, httptest.NewRequest(http.MethodGet, "/oauth2/connect", nil))
+		if rec.Code != http.StatusInternalServerError {
+			t.Fatalf("got %d while the issuer is down, want 500", rec.Code)
+		}
+	}
+	if got := hits.Load(); got != 2 {
+		t.Errorf("issuer hit %d times, want 2: one failed discovery and one retry", got)
+	}
+}
+
+func TestConnectDoesNotRetryInvalidConfiguration(t *testing.T) {
+	var up atomic.Bool
+	var hits atomic.Int32
+	p, _ := newDiscoveryTestPlugin(t, &up, &hits, nil)
+	up.Store(true)
+	config := p.getConfiguration()
+	config.ClientSecret = ""
+	p.setConfiguration(config)
+
+	rec := httptest.NewRecorder()
+	p.handleOAuth2Connect(rec, httptest.NewRequest(http.MethodGet, "/oauth2/connect", nil))
+
+	if rec.Code != http.StatusInternalServerError || hits.Load() != 0 {
+		t.Fatalf("got %d after %d discovery calls, want 500 and none", rec.Code, hits.Load())
+	}
+}
+
+func TestDiscoveryDiscardedWhenConfigurationChanges(t *testing.T) {
+	var up atomic.Bool
+	var hits atomic.Int32
+	var p *Plugin
+	p, _ = newDiscoveryTestPlugin(t, &up, &hits, func() {
+		config := p.getConfiguration()
+		config.ClientID = "rotated"
+		p.setConfiguration(config)
+	})
+	up.Store(true)
+
+	if err := p.initOIDCProvider(); err == nil || p.getOAuthConfig() != nil {
+		t.Fatalf("got err=%v, provider set=%t; want the stale discovery discarded", err, p.getOAuthConfig() != nil)
+	}
+}
+
+func TestOnConfigurationChangeDiscardsOldProviderOnInvalidConfig(t *testing.T) {
+	var up atomic.Bool
+	var hits atomic.Int32
+	p, issuer := newDiscoveryTestPlugin(t, &up, &hits, nil)
+	up.Store(true)
+
+	// Successfully initialize provider with valid config.
+	if err := p.initOIDCProvider(); err != nil {
+		t.Fatalf("failed to initialize provider: %v", err)
+	}
+	if p.getOAuthConfig() == nil {
+		t.Fatal("expected oauthConfig to be set")
+	}
+
+	// Mock LoadPluginConfiguration to return an invalid config (missing ClientSecret).
+	invalidCfg := &Configuration{
+		Enable:       true,
+		IssuerURL:    issuer,
+		ClientID:     "mattermost",
+		ClientSecret: "", // invalid
+		Scopes:       "openid",
+	}
+	rawAPI := p.API.(quietAPI).API
+	rawAPI.On("LoadPluginConfiguration", mock.Anything).Run(func(args mock.Arguments) {
+		dest := args.Get(0).(*Configuration)
+		*dest = *invalidCfg
+	}).Return(nil)
+
+	if err := p.OnConfigurationChange(); err != nil {
+		t.Fatalf("OnConfigurationChange returned unexpected error: %v", err)
+	}
+
+	// Provider state must be completely cleared.
+	if p.getOAuthConfig() != nil || p.getOIDCProvider() != nil || p.getOIDCVerifier() != nil {
+		t.Fatal("expected provider state to be discarded after invalid configuration change")
+	}
+
+	// Login attempt must fail fast with 500, not redirect to the old provider.
+	rec := httptest.NewRecorder()
+	p.handleOAuth2Connect(rec, httptest.NewRequest(http.MethodGet, "/oauth2/connect", nil))
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("got status %d, want 500", rec.Code)
+	}
+}
+
+func TestOnConfigurationChangeDiscardsOldProviderOnFailedDiscovery(t *testing.T) {
+	var up atomic.Bool
+	var hits atomic.Int32
+	p, _ := newDiscoveryTestPlugin(t, &up, &hits, nil)
+	up.Store(true)
+
+	// Successfully initialize provider with initial config.
+	if err := p.initOIDCProvider(); err != nil {
+		t.Fatalf("failed to initialize provider: %v", err)
+	}
+	if p.getOAuthConfig() == nil {
+		t.Fatal("expected oauthConfig to be set")
+	}
+
+	// Create a new IdP that is currently down.
+	var newHits atomic.Int32
+	var newUp atomic.Bool
+	var newIssuer string
+	newIdp := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		newHits.Add(1)
+		if !newUp.Load() {
+			http.Error(w, "down", http.StatusServiceUnavailable)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]string{
+			"issuer":                 newIssuer,
+			"authorization_endpoint": newIssuer + "/auth",
+			"token_endpoint":         newIssuer + "/token",
+			"jwks_uri":               newIssuer + "/certs",
+		})
+	}))
+	t.Cleanup(newIdp.Close)
+	newIssuer = newIdp.URL
+
+	// Point discovery client to handle the new TLS server.
+	p.discoveryClient = newIdp.Client()
+
+	newCfg := &Configuration{
+		Enable:       true,
+		IssuerURL:    newIssuer,
+		ClientID:     "mattermost",
+		ClientSecret: "secret",
+		Scopes:       "openid",
+	}
+	rawAPI := p.API.(quietAPI).API
+	rawAPI.On("LoadPluginConfiguration", mock.Anything).Run(func(args mock.Arguments) {
+		dest := args.Get(0).(*Configuration)
+		*dest = *newCfg
+	}).Return(nil)
+
+	// Discovery should fail because newIdp is down.
+	if err := p.OnConfigurationChange(); err != nil {
+		t.Fatalf("OnConfigurationChange returned unexpected error: %v", err)
+	}
+
+	// Old provider must be discarded!
+	if p.getOAuthConfig() != nil {
+		t.Fatal("expected old oauthConfig to be discarded when new discovery fails")
+	}
+
+	// Now bring newIdp up and test that login retry discovers the NEW issuer, not the old one.
+	newUp.Store(true)
+	rec := httptest.NewRecorder()
+	p.handleOAuth2Connect(rec, httptest.NewRequest(http.MethodGet, "/oauth2/connect", nil))
+	if rec.Code != http.StatusFound || !strings.HasPrefix(rec.Header().Get("Location"), newIssuer+"/auth?") {
+		t.Fatalf("got %d to %q, want redirect to new issuer %s", rec.Code, rec.Header().Get("Location"), newIssuer)
+	}
+}
+
+func TestOnConfigurationChangeDiscardsOldProviderOnDisable(t *testing.T) {
+	var up atomic.Bool
+	var hits atomic.Int32
+	p, issuer := newDiscoveryTestPlugin(t, &up, &hits, nil)
+	up.Store(true)
+
+	if err := p.initOIDCProvider(); err != nil {
+		t.Fatalf("failed to initialize provider: %v", err)
+	}
+	if p.getOAuthConfig() == nil {
+		t.Fatal("expected oauthConfig to be set")
+	}
+
+	disabledCfg := &Configuration{
+		Enable:       false,
+		IssuerURL:    issuer,
+		ClientID:     "mattermost",
+		ClientSecret: "secret",
+		Scopes:       "openid",
+	}
+	rawAPI := p.API.(quietAPI).API
+	rawAPI.On("LoadPluginConfiguration", mock.Anything).Run(func(args mock.Arguments) {
+		dest := args.Get(0).(*Configuration)
+		*dest = *disabledCfg
+	}).Return(nil)
+
+	if err := p.OnConfigurationChange(); err != nil {
+		t.Fatalf("OnConfigurationChange returned unexpected error: %v", err)
+	}
+
+	if p.getOAuthConfig() != nil {
+		t.Fatal("expected oauthConfig to be nil after disabling plugin")
+	}
+
+	rec := httptest.NewRecorder()
+	p.handleOAuth2Connect(rec, httptest.NewRequest(http.MethodGet, "/oauth2/connect", nil))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("got status %d, want 400 Bad Request", rec.Code)
+	}
+}
+
+func TestOnDeactivateDiscardsProvider(t *testing.T) {
+	var up atomic.Bool
+	var hits atomic.Int32
+	p, _ := newDiscoveryTestPlugin(t, &up, &hits, nil)
+	up.Store(true)
+
+	if err := p.initOIDCProvider(); err != nil {
+		t.Fatalf("failed to initialize provider: %v", err)
+	}
+	if p.getOAuthConfig() == nil {
+		t.Fatal("expected oauthConfig to be set")
+	}
+
+	if err := p.OnDeactivate(); err != nil {
+		t.Fatalf("OnDeactivate returned unexpected error: %v", err)
+	}
+
+	if p.getOAuthConfig() != nil || p.getOIDCProvider() != nil || p.getOIDCVerifier() != nil {
+		t.Fatal("expected provider state to be nil after deactivation")
+	}
+}
+
+func TestPublicConfigEnableRequiresValidConfig(t *testing.T) {
+	p := &Plugin{}
+
+	// Case 1: Disabled
+	p.setConfiguration(&Configuration{
+		Enable: false,
+	})
+	rec := httptest.NewRecorder()
+	p.handleGetPublicConfig(rec, httptest.NewRequest(http.MethodGet, "/api/v1/config", nil))
+	var resp map[string]interface{}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to unmarshal response: %v", err)
+	}
+	if resp["enable"] != false {
+		t.Fatalf("expected enable=false when disabled, got %v", resp["enable"])
+	}
+
+	// Case 2: Enabled but invalid (missing ClientSecret, IssuerURL not https)
+	p.setConfiguration(&Configuration{
+		Enable:    true,
+		IssuerURL: "http://not-https.com",
+		ClientID:  "client",
+	})
+	rec = httptest.NewRecorder()
+	p.handleGetPublicConfig(rec, httptest.NewRequest(http.MethodGet, "/api/v1/config", nil))
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to unmarshal response: %v", err)
+	}
+	if resp["enable"] != false {
+		t.Fatalf("expected enable=false when config is invalid, got %v", resp["enable"])
+	}
+
+	// Case 3: Enabled and valid
+	p.setConfiguration(&Configuration{
+		Enable:       true,
+		IssuerURL:    "https://idp.example.com",
+		ClientID:     "client",
+		ClientSecret: "secret",
+		Scopes:       "openid",
+		ButtonText:   "SSO Login",
+		ButtonColor:  "#123456",
+	})
+	rec = httptest.NewRecorder()
+	p.handleGetPublicConfig(rec, httptest.NewRequest(http.MethodGet, "/api/v1/config", nil))
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to unmarshal response: %v", err)
+	}
+	if resp["enable"] != true {
+		t.Fatalf("expected enable=true when config is valid, got %v", resp["enable"])
+	}
+	if resp["button_text"] != "SSO Login" || resp["button_color"] != "#123456" {
+		t.Fatalf("unexpected button attributes in public config: %v", resp)
+	}
+}
+
+func TestOnActivateAndConfigChangeDoNotRedundantlyInitProvider(t *testing.T) {
+	var up atomic.Bool
+	var hits atomic.Int32
+	p, issuer := newDiscoveryTestPlugin(t, &up, &hits, nil)
+	up.Store(true)
+
+	validCfg := Configuration{
+		Enable:       true,
+		IssuerURL:    issuer,
+		ClientID:     "mattermost",
+		ClientSecret: "secret",
+		Scopes:       "openid",
+	}
+
+	rawAPI := p.API.(quietAPI).API
+	rawAPI.On("KVGet", kvEncryptionKey).Return([]byte("test-key"), nil)
+	rawAPI.On("LoadPluginConfiguration", mock.Anything).Run(func(args mock.Arguments) {
+		dest := args.Get(0).(*Configuration)
+		*dest = validCfg
+	}).Return(nil)
+
+	// Step 1: Mattermost calls OnConfigurationChange before OnActivate on startup.
+	if err := p.OnConfigurationChange(); err != nil {
+		t.Fatalf("first OnConfigurationChange failed: %v", err)
+	}
+	if got := hits.Load(); got != 1 {
+		t.Fatalf("discovery hits after first OnConfigurationChange = %d, want 1", got)
+	}
+
+	// Step 2: Mattermost calls OnActivate. Since provider is already initialized, hits should remain 1.
+	if err := p.OnActivate(); err != nil {
+		t.Fatalf("OnActivate failed: %v", err)
+	}
+	if got := hits.Load(); got != 1 {
+		t.Fatalf("discovery hits after OnActivate = %d, want 1 (should not re-initialize)", got)
+	}
+
+	// Step 3: Mattermost broadcasts config change (e.g. saving server settings / PluginStates).
+	// Configuration is unchanged, so hits should remain 1.
+	if err := p.OnConfigurationChange(); err != nil {
+		t.Fatalf("second OnConfigurationChange failed: %v", err)
+	}
+	if got := hits.Load(); got != 1 {
+		t.Fatalf("discovery hits after unchanged OnConfigurationChange = %d, want 1 (should not re-initialize)", got)
+	}
+
+	// Step 4: If configuration actually changes (e.g. rotated client ID), discovery should run again.
+	validCfg.ClientID = "mattermost-rotated"
+	if err := p.OnConfigurationChange(); err != nil {
+		t.Fatalf("third OnConfigurationChange failed: %v", err)
+	}
+	if got := hits.Load(); got != 2 {
+		t.Fatalf("discovery hits after changed OnConfigurationChange = %d, want 2", got)
 	}
 }

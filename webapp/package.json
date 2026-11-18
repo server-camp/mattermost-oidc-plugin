@@ -4,7 +4,8 @@
     "description": "Webapp component for the mattermost / mostlymatter OIDC plugin",
     "scripts": {
         "build": "webpack --mode=production",
-        "dev": "webpack --mode=development --watch"
+        "dev": "webpack --mode=development --watch",
+        "test": "node --test \"test/*.test.js\""
     },
     "devDependencies": {
         "@babel/core": "^7.24.0",

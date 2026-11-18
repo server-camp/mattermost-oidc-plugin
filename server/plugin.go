@@ -30,6 +30,9 @@ const (
 // kvEncryptionKey is the KV store key under which the HMAC signing key is persisted.
 const kvEncryptionKey = "_plugin_encryption_key"
 
+// discoveryRetryInterval limits how often unauthenticated login requests can make the plugin contact the issuer.
+const discoveryRetryInterval = 10 * time.Second
+
 // Plugin implements the Mattermost plugin interface.
 type Plugin struct {
 	plugin.MattermostPlugin
@@ -52,6 +55,15 @@ type Plugin struct {
 
 	// oidcVerifier is the ID token verifier.
 	oidcVerifier *oidc.IDTokenVerifier
+
+	// retryLock allows one login-time discovery retry at a time.
+	retryLock sync.Mutex
+
+	// lastDiscoveryRetry is when a login request last retried discovery, guarded by retryLock.
+	lastDiscoveryRetry time.Time
+
+	// discoveryClient overrides the HTTP client used for OIDC discovery when set (currently only used by tests).
+	discoveryClient *http.Client
 
 	// router handles HTTP requests for this plugin.
 	router *mux.Router
@@ -84,8 +96,10 @@ func (p *Plugin) OnActivate() error {
 			p.API.LogWarn("OIDC plugin configuration is incomplete", "error", err.Error())
 			return nil // Don't fail activation, just log the issue
 		}
-		if err := p.initOIDCProvider(); err != nil {
-			p.API.LogWarn("Failed to initialize OIDC provider", "error", err.Error())
+		if p.getOAuthConfig() == nil {
+			if err := p.initOIDCProvider(); err != nil {
+				p.API.LogWarn("Failed to initialize OIDC provider", "error", err.Error())
+			}
 		}
 	}
 
@@ -95,6 +109,7 @@ func (p *Plugin) OnActivate() error {
 
 // OnDeactivate is called when the plugin is deactivated.
 func (p *Plugin) OnDeactivate() error {
+	p.clearOIDCProvider()
 	p.API.LogInfo("Mattermost / Mostlymatter OIDC plugin deactivated")
 	return nil
 }
@@ -106,7 +121,18 @@ func (p *Plugin) OnConfigurationChange() error {
 		return fmt.Errorf("failed to load plugin configuration: %w", err)
 	}
 
+	p.configurationLock.RLock()
+	var (
+		unchanged   = p.configuration != nil && *p.configuration == configuration
+		hasProvider = p.oauth2Config != nil
+	)
+	p.configurationLock.RUnlock()
+	if unchanged && hasProvider {
+		return nil // if settings did not change and the provider is already running, skip re-discovery.
+	}
+
 	p.setConfiguration(&configuration)
+	p.clearOIDCProvider() // clear old config to prevent stale, outdated config in case the newly saved one is invalid
 
 	if configuration.Enable {
 		if err := configuration.IsValid(); err != nil {
@@ -140,15 +166,31 @@ func (p *Plugin) setConfiguration(configuration *Configuration) {
 	p.configuration = configuration
 }
 
+// clearOIDCProvider resets the cached provider, OAuth2 configuration, and verifier.
+func (p *Plugin) clearOIDCProvider() {
+	p.configurationLock.Lock()
+	defer p.configurationLock.Unlock()
+
+	p.oidcProvider = nil
+	p.oauth2Config = nil
+	p.oidcVerifier = nil
+}
+
 // initOIDCProvider discovers and initializes the OIDC provider, OAuth2 config, and verifier.
 func (p *Plugin) initOIDCProvider() error {
 	config := p.getConfiguration()
+	if err := config.IsValid(); err != nil {
+		return err
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
+	if p.discoveryClient != nil {
+		ctx = oidc.ClientContext(ctx, p.discoveryClient)
+	}
 
-	// oidc.NewProvider expects the issuer URL and appends /.well-known/openid-configuration itself.
-	// Strip the suffix if the user accidentally included it.
+	// oidc.NewProvider expects the issuer URL and appends /.well-known/openid-configuration itself -> strip the suffix if the user accidentally included it.
+	// Note that this will potentially result in a URL mismatch if the provider sends its URL with a trailing slash, see https://github.com/coreos/go-oidc/issues/442.
 	issuer := strings.TrimSuffix(config.IssuerURL, "/.well-known/openid-configuration")
 
 	provider, err := oidc.NewProvider(ctx, issuer)
@@ -180,10 +222,17 @@ func (p *Plugin) initOIDCProvider() error {
 	})
 
 	p.configurationLock.Lock()
-	p.oidcProvider = provider
-	p.oauth2Config = oauthConfig
-	p.oidcVerifier = verifier
+	// A configuration saved during discovery gets its own OnConfigurationChange, so this result is stale.
+	stale := p.configuration == nil || *p.configuration != *config
+	if !stale {
+		p.oidcProvider = provider
+		p.oauth2Config = oauthConfig
+		p.oidcVerifier = verifier
+	}
 	p.configurationLock.Unlock()
+	if stale {
+		return fmt.Errorf("configuration changed during discovery")
+	}
 
 	p.API.LogInfo("OIDC provider initialized successfully",
 		"issuer_url", config.IssuerURL,
@@ -191,6 +240,21 @@ func (p *Plugin) initOIDCProvider() error {
 		"pkce", "S256",
 	)
 	return nil
+}
+
+// retryOIDCProvider re-runs failed discovery for a login request, at most once per discoveryRetryInterval.
+func (p *Plugin) retryOIDCProvider() {
+	if !p.retryLock.TryLock() {
+		return
+	}
+	defer p.retryLock.Unlock()
+	if p.getOAuthConfig() != nil || time.Since(p.lastDiscoveryRetry) < discoveryRetryInterval {
+		return
+	}
+	if err := p.initOIDCProvider(); err != nil {
+		p.API.LogWarn("Failed to initialize OIDC provider on login", "error", err.Error())
+	}
+	p.lastDiscoveryRetry = time.Now()
 }
 
 // ServeHTTP routes incoming HTTP requests to the plugin's router.
@@ -205,6 +269,7 @@ func (p *Plugin) initRouter() {
 	// OAuth2 endpoints
 	p.router.HandleFunc("/oauth2/connect", p.handleOAuth2Connect).Methods(http.MethodGet)
 	p.router.HandleFunc("/oauth2/callback", p.handleOAuth2Callback).Methods(http.MethodGet)
+	p.router.HandleFunc("/oauth2/callback", p.handleDesktopRedeem).Methods(http.MethodPost)
 
 	// API endpoints
 	p.router.HandleFunc("/api/v1/config", p.handleGetPublicConfig).Methods(http.MethodGet)
