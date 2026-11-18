@@ -532,6 +532,17 @@ func TestLoginUpdatesUsername(t *testing.T) {
 		e.api.AssertNotCalled(t, "UpdateUser", mock.Anything)
 	})
 
+	t.Run("logs in under the current name if the username is taken after lookup", func(t *testing.T) {
+		e := newEnv(t, "alice_ab12cd", map[string]any{"preferred_username": "alice"})
+		e.api.On("GetUserByUsername", "alice").Return(nil, model.NewAppError("GetUserByUsername", "app.user.get_by_username.app_error", nil, "", http.StatusNotFound))
+		e.api.On("UpdateUser", mock.MatchedBy(func(u *model.User) bool {
+			return u.Id == testUserID && u.Username == "alice"
+		})).Return(nil, model.NewAppError("UpdateUser", "app.user.save.username_exists.app_error", nil, "", http.StatusBadRequest)).Once()
+
+		loggedIn(t, e)
+		e.api.AssertExpectations(t)
+	})
+
 	t.Run("never applies the name derived from the email address", func(t *testing.T) {
 		e := newEnv(t, "alice_ab12cd", nil)
 
