@@ -682,27 +682,30 @@ func (p *Plugin) updateUserIfChanged(user *model.User, info *OIDCUserInfo) (*mod
 	}
 
 	if p.getConfiguration().AutoUpdateUsername {
-		user = p.updateUsername(user, info)
+		updatedUser, changed := p.updateUsername(user, info)
+		if changed {
+			user = updatedUser
+		}
 	}
 	return user, nil
 }
 
 // updateUsername renames the user to the username claim, as core does for its OAuth providers.
 // It never fails the login: a name that is invalid or held by another account is kept and logged.
-func (p *Plugin) updateUsername(user *model.User, info *OIDCUserInfo) *model.User {
+func (p *Plugin) updateUsername(user *model.User, info *OIDCUserInfo) (*model.User, bool) {
 	if !info.UsernameFromClaim || user.Username == info.Username {
-		return user
+		return nil, false
 	}
 
 	if !model.IsValidUsername(info.Username) {
 		p.API.LogWarn("Keeping username: the OIDC username is not a valid Mattermost username",
 			"user_id", user.Id, "username", user.Username, "oidc_username", info.Username)
-		return user
+		return nil, false
 	}
 	if existing, _ := p.API.GetUserByUsername(info.Username); existing != nil {
 		p.API.LogWarn("Keeping username: the OIDC username belongs to another account",
 			"user_id", user.Id, "username", user.Username, "oidc_username", info.Username, "other_user_id", existing.Id)
-		return user
+		return nil, false
 	}
 
 	renamed := *user
@@ -711,11 +714,11 @@ func (p *Plugin) updateUsername(user *model.User, info *OIDCUserInfo) *model.Use
 	if appErr != nil {
 		p.API.LogWarn("Keeping username: the rename failed",
 			"user_id", user.Id, "username", user.Username, "oidc_username", info.Username, "error", appErr.Error())
-		return user
+		return nil, false
 	}
 
 	p.API.LogInfo("Updated username from OIDC", "user_id", user.Id, "old_username", user.Username, "username", updatedUser.Username)
-	return updatedUser
+	return updatedUser, true
 }
 
 // handleGetPublicConfig returns the publicly visible configuration (button text/color, enable status).
