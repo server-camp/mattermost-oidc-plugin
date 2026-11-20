@@ -137,7 +137,7 @@
                 "key": "AutoLinkByEmail",
                 "display_name": "Auto-Link Existing Accounts by Email",
                 "type": "bool",
-                "help_text": "When enabled, existing accounts will be automatically linked to OIDC on first login if the email matches. Warning: this will override any existing auth provider (LDAP, SAML, etc.) for matching accounts.",
+                "help_text": "When enabled, existing local email/password accounts are linked to OIDC on first login if the email matches. Accounts that already log in through another method (LDAP, SAML, other OAuth provider, or different OIDC subject) are never re-linked (login is refused for such). Warning: linking trusts the email claim, so it requires an identity provider that enforces unique email addresses that users cannot change themselves.",
                 "default": false
             },
             {

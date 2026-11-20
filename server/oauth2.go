@@ -578,6 +578,21 @@ func (p *Plugin) getOrCreateUser(userInfo *OIDCUserInfo, config *Configuration) 
 		if !config.AutoLinkByEmail {
 			return nil, fmt.Errorf("user with email %s exists but auto-linking is disabled", userInfo.Email)
 		}
+		if user.AuthService == AuthService && user.GetAuthData() == userInfo.Subject {
+			// account already linked to this very subject, only the KV mapping is missing (e.g. its write failed when the account was first linked)
+			p.API.LogInfo("Repairing OIDC user mapping", "user_id", user.Id, "subject", userInfo.Subject)
+			if setErr := p.API.KVSet(kvKey, []byte(user.Id)); setErr != nil {
+				p.API.LogWarn("Failed to store OIDC user mapping", "key", kvKey, "error", setErr.Error())
+			}
+			return p.updateUserIfChanged(user, userInfo)
+		}
+		if user.IsSSOUser() {
+			// See https://github.com/server-camp/mattermost-oidc-plugin/issues/48
+			// The account already linked to some auth service (LDAP, SAML, another OAuth provider, or a different OIDC subject)
+			// -> don't re-link, because this would hand the account to whoever controls the email at the IdP which isn't necessarily the same user (we don't treat email as an authoritative field).
+			p.API.LogWarn("Refusing to auto-link: account is already linked to another login", "user_id", user.Id, "auth_service", user.AuthService)
+			return nil, fmt.Errorf("user with email %s is already linked to another login, refusing to re-link", userInfo.Email)
+		}
 		p.API.LogInfo("Linking existing user to OIDC", "user_id", user.Id, "email", userInfo.Email)
 		_, updateErr := p.API.UpdateUserAuth(user.Id, &model.UserAuth{
 			AuthService: AuthService,

@@ -1214,3 +1214,118 @@ func TestClientSecretEnvironmentLifecycle(t *testing.T) {
 		t.Fatal("OAuth2 configuration did not fall back to the stored secret")
 	}
 }
+
+// TestGetOrCreateUserAutoLink covers the guard added for #48: auto-linking by
+// email may only convert local email/password accounts. An account that is
+// already linked to another login method must never be re-linked, while an
+// account linked to this very subject must still be able to log in even when
+// its KV mapping is gone.
+func TestGetOrCreateUserAutoLink(t *testing.T) {
+	const (
+		subject = "idp-subject-1"
+		userID  = "user-alice"
+		email   = "alice@example.com"
+	)
+	kvKey := KVOIDCUserPrefix + subject
+	info := &OIDCUserInfo{Subject: subject, Email: email, Username: "alice"}
+
+	// newEnv returns a plugin where the subject has no KV mapping yet (first
+	// login with this subject) and GetUserByEmail finds an account as described
+	// by stored.
+	newEnv := func(stored *model.User) (*Plugin, *plugintest.API) {
+		api := &plugintest.API{}
+		p := &Plugin{}
+		p.SetAPI(quietAPI{api})
+		p.setConfiguration(&Configuration{Enable: true, AutoLinkByEmail: true})
+		api.On("KVGet", kvKey).Return(nil, nil)
+		api.On("GetUserByEmail", email).Return(func(string) *model.User {
+			u := *stored
+			return &u
+		}, nil)
+		return p, api
+	}
+
+	linkCall := func() interface{} {
+		return mock.MatchedBy(func(auth *model.UserAuth) bool {
+			return auth != nil && auth.AuthService == AuthService &&
+				auth.AuthData != nil && *auth.AuthData == subject
+		})
+	}
+
+	t.Run("links legacy local account (empty auth service)", func(t *testing.T) {
+		stored := &model.User{Id: userID, Email: email, Username: "alice"}
+		p, api := newEnv(stored)
+		api.On("UpdateUserAuth", userID, linkCall()).Return(&model.UserAuth{AuthService: AuthService, AuthData: model.NewPointer(subject)}, nil)
+		api.On("KVSet", kvKey, []byte(userID)).Return(nil)
+
+		user, err := p.getOrCreateUser(info, p.getConfiguration())
+		require.NoError(t, err)
+		require.Equal(t, userID, user.Id)
+		api.AssertExpectations(t)
+	})
+
+	t.Run("links email/password account (auth service 'email')", func(t *testing.T) {
+		// Core stores AuthService "email" on local password accounts; these are
+		// the migration target, so they must stay linkable.
+		stored := &model.User{Id: userID, Email: email, Username: "alice", AuthService: model.UserAuthServiceEmail}
+		p, api := newEnv(stored)
+		api.On("UpdateUserAuth", userID, linkCall()).Return(&model.UserAuth{AuthService: AuthService, AuthData: model.NewPointer(subject)}, nil)
+		api.On("KVSet", kvKey, []byte(userID)).Return(nil)
+
+		user, err := p.getOrCreateUser(info, p.getConfiguration())
+		require.NoError(t, err)
+		require.Equal(t, userID, user.Id)
+		api.AssertExpectations(t)
+	})
+
+	t.Run("refuses account linked to another auth service", func(t *testing.T) {
+		stored := &model.User{Id: userID, Email: email, Username: "alice", AuthService: "ldap", AuthData: model.NewPointer("uid=alice,dc=example,dc=com")}
+		p, api := newEnv(stored)
+
+		user, err := p.getOrCreateUser(info, p.getConfiguration())
+		require.Error(t, err)
+		require.Nil(t, user)
+		require.Contains(t, err.Error(), "already linked to another login")
+		api.AssertNotCalled(t, "UpdateUserAuth", mock.Anything, mock.Anything)
+		api.AssertNotCalled(t, "KVSet", mock.Anything, mock.Anything)
+	})
+
+	t.Run("refuses account linked to a different OIDC subject", func(t *testing.T) {
+		stored := &model.User{Id: userID, Email: email, Username: "alice", AuthService: AuthService, AuthData: model.NewPointer("other-subject")}
+		p, api := newEnv(stored)
+
+		user, err := p.getOrCreateUser(info, p.getConfiguration())
+		require.Error(t, err)
+		require.Nil(t, user)
+		require.Contains(t, err.Error(), "already linked to another login")
+		api.AssertNotCalled(t, "UpdateUserAuth", mock.Anything, mock.Anything)
+		api.AssertNotCalled(t, "KVSet", mock.Anything, mock.Anything)
+	})
+
+	t.Run("repairs mapping for account already linked to this subject", func(t *testing.T) {
+		// The link succeeded back then but the KVSet failed; the same subject
+		// must not be locked out of its own account.
+		stored := &model.User{Id: userID, Email: email, Username: "alice", AuthService: AuthService, AuthData: model.NewPointer(subject)}
+		p, api := newEnv(stored)
+		api.On("KVSet", kvKey, []byte(userID)).Return(nil)
+
+		user, err := p.getOrCreateUser(info, p.getConfiguration())
+		require.NoError(t, err)
+		require.Equal(t, userID, user.Id)
+		api.AssertNotCalled(t, "UpdateUserAuth", mock.Anything, mock.Anything)
+		api.AssertExpectations(t)
+	})
+
+	t.Run("refuses new subject when auto-linking is disabled", func(t *testing.T) {
+		stored := &model.User{Id: userID, Email: email, Username: "alice", AuthService: AuthService, AuthData: model.NewPointer("other-subject")}
+		p, api := newEnv(stored)
+		p.setConfiguration(&Configuration{Enable: true, AutoLinkByEmail: false})
+
+		user, err := p.getOrCreateUser(info, p.getConfiguration())
+		require.Error(t, err)
+		require.Nil(t, user)
+		require.Contains(t, err.Error(), "auto-linking is disabled")
+		api.AssertNotCalled(t, "UpdateUserAuth", mock.Anything, mock.Anything)
+		api.AssertNotCalled(t, "KVSet", mock.Anything, mock.Anything)
+	})
+}
