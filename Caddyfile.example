@@ -1,0 +1,11 @@
+# Caddyfile.example — local dev ingress for the mobile bridge
+
+{
+	auto_https off
+}
+
+:8000 {
+	@bridge path /api/v4/config/client /oauth/openid/mobile_login
+	reverse_proxy @bridge localhost:8066
+	reverse_proxy localhost:8065
+}
