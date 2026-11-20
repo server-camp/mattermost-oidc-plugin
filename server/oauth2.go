@@ -82,7 +82,7 @@ type OIDCUserInfo struct {
 	LastName      string `json:"last_name"`
 	Position      string `json:"position,omitempty"`
 	EmailVerified *bool  `json:"email_verified,omitempty"`
-	// UsernameFromClaim is false when Username was derived from the email address.
+	// UsernameFromClaim is false when the username claim was absent or blank and when Username was derived from the email address.
 	UsernameFromClaim bool `json:"-"`
 }
 
@@ -526,6 +526,8 @@ func (p *Plugin) extractUserInfo(ctx context.Context, idToken *oidc.IDToken, oau
 		EmailVerified: getBoolClaim(claims, config.EmailVerifiedClaim),
 	}
 
+	info.Username = strings.TrimSpace(info.Username) // blank username claim counts as absent, so it can never rename users later
+
 	// Fallback: use email prefix as username if no username claim found
 	info.UsernameFromClaim = info.Username != ""
 	if info.Username == "" && info.Email != "" {
@@ -570,6 +572,7 @@ func (p *Plugin) getOrCreateUser(userInfo *OIDCUserInfo, config *Configuration) 
 	}
 
 	// Try to find by email and optionally link to OIDC
+	// After initial login, email is not the "authoritative" claim anymore, but subject is instead
 	user, appErr := p.API.GetUserByEmail(userInfo.Email)
 	if appErr == nil && user != nil {
 		if !config.AutoLinkByEmail {
@@ -682,8 +685,7 @@ func (p *Plugin) updateUserIfChanged(user *model.User, info *OIDCUserInfo) (*mod
 	}
 
 	if p.getConfiguration().AutoUpdateUsername {
-		updatedUser, changed := p.updateUsername(user, info)
-		if changed {
+		if updatedUser, changed := p.updateUsername(user, info); changed {
 			user = updatedUser
 		}
 	}
@@ -698,13 +700,11 @@ func (p *Plugin) updateUsername(user *model.User, info *OIDCUserInfo) (*model.Us
 	}
 
 	if !model.IsValidUsername(info.Username) {
-		p.API.LogWarn("Keeping username: the OIDC username is not a valid Mattermost username",
-			"user_id", user.Id, "username", user.Username, "oidc_username", info.Username)
+		p.API.LogWarn("Keeping username: the OIDC username is not a valid Mattermost username", "user_id", user.Id, "username", user.Username, "oidc_username", info.Username)
 		return nil, false
 	}
 	if existing, _ := p.API.GetUserByUsername(info.Username); existing != nil {
-		p.API.LogWarn("Keeping username: the OIDC username belongs to another account",
-			"user_id", user.Id, "username", user.Username, "oidc_username", info.Username, "other_user_id", existing.Id)
+		p.API.LogWarn("Keeping username: the OIDC username belongs to another account", "user_id", user.Id, "username", user.Username, "oidc_username", info.Username, "other_user_id", existing.Id)
 		return nil, false
 	}
 
@@ -712,8 +712,7 @@ func (p *Plugin) updateUsername(user *model.User, info *OIDCUserInfo) (*model.Us
 	renamed.Username = info.Username
 	updatedUser, appErr := p.API.UpdateUser(&renamed)
 	if appErr != nil {
-		p.API.LogWarn("Keeping username: the rename failed",
-			"user_id", user.Id, "username", user.Username, "oidc_username", info.Username, "error", appErr.Error())
+		p.API.LogWarn("Keeping username: the rename failed", "user_id", user.Id, "username", user.Username, "oidc_username", info.Username, "error", appErr.Error())
 		return nil, false
 	}
 

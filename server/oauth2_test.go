@@ -550,6 +550,14 @@ func TestLoginUpdatesUsername(t *testing.T) {
 		e.api.AssertNotCalled(t, "GetUserByUsername", mock.Anything)
 		e.api.AssertNotCalled(t, "UpdateUser", mock.Anything)
 	})
+
+	t.Run("never applies a blank username claim", func(t *testing.T) {
+		e := newEnv(t, "alice_ab12cd", map[string]any{"preferred_username": " \t "})
+
+		loggedIn(t, e)
+		e.api.AssertNotCalled(t, "GetUserByUsername", mock.Anything)
+		e.api.AssertNotCalled(t, "UpdateUser", mock.Anything)
+	})
 }
 
 func TestNonceMatches(t *testing.T) {
