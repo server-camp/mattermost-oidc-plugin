@@ -858,6 +858,10 @@ func getCookiePath(siteURL string) string {
 
 // renderError renders a simple error page to the user.
 func (p *Plugin) renderError(w http.ResponseWriter, message string) {
+	if w.Header() == nil {
+		return // see https://github.com/server-camp/mattermost-oidc-plugin/issues/49
+	}
+
 	siteURL := p.getSiteURL()
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(http.StatusBadRequest)

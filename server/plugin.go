@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"net/http"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"time"
@@ -271,6 +272,8 @@ func (p *Plugin) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Req
 func (p *Plugin) initRouter() {
 	p.router = mux.NewRouter()
 
+	p.router.Use(p.withRecovery)
+
 	// OAuth2 endpoints
 	p.router.HandleFunc("/oauth2/connect", p.handleOAuth2Connect).Methods(http.MethodGet)
 	p.router.HandleFunc("/oauth2/callback", p.handleOAuth2Callback).Methods(http.MethodGet)
@@ -278,6 +281,23 @@ func (p *Plugin) initRouter() {
 
 	// API endpoints
 	p.router.HandleFunc("/api/v1/config", p.handleGetPublicConfig).Methods(http.MethodGet)
+}
+
+// copied from https://github.com/mattermost/mattermost-mattermod/blob/master/server/server.go#L153
+func (p *Plugin) withRecovery(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer func() {
+			if err := recover(); err != nil {
+				p.API.LogError(
+					"recovered from a panic",
+					"url", r.URL.String(),
+					"error", err,
+					"stack", string(debug.Stack()),
+				)
+			}
+		}()
+		next.ServeHTTP(w, r)
+	})
 }
 
 // getEncryptionKey returns the HMAC signing key cached from the KV store.
