@@ -149,7 +149,16 @@ func fetchPluginConfig(cfg config, client *http.Client) (pluginPublicConfig, err
 
 // matchesMobileUA reports whether the User-Agent identifies the native app.
 func matchesMobileUA(ua, match string) bool {
-	return match != "" && strings.Contains(ua, match)
+	if match == "" {
+		return false
+	}
+	// comma-separated substrings: any hit marks a native/mobile client
+	for _, m := range strings.Split(match, ",") {
+		if m != "" && strings.Contains(ua, m) {
+			return true
+		}
+	}
+	return false
 }
 
 // newHandler builds the shim's HTTP handler: a reverse proxy for the client-config
@@ -192,6 +201,22 @@ func newHandler(cfg config, client *http.Client, cache *buttonCache) http.Handle
 	})
 	mux.Handle("/api/v4/config/client", proxy)
 	mux.HandleFunc("/oauth/openid/mobile_login", func(w http.ResponseWriter, r *http.Request) {
+		handleMobileLogin(cfg, w, r)
+	})
+	// MattCha (and possibly other 3rd-party clients) implement "OAuth 2.0" SSO
+	// through the GitLab provider path instead; on Team Edition that route is
+	// also licence-gated, so divert gitlab login/mobile_login identically.
+	mux.HandleFunc("/oauth/gitlab/mobile_login", func(w http.ResponseWriter, r *http.Request) {
+		handleMobileLogin(cfg, w, r)
+	})
+	mux.HandleFunc("/oauth/gitlab/login", func(w http.ResponseWriter, r *http.Request) {
+		handleMobileLogin(cfg, w, r)
+	})
+	// 3rd-party desktop-class clients post SSO to /oauth/openid/login too; on
+	// Team Edition that core route is licence-gated (permanently 501), so
+	// bridge it identically. redirect_to is optional here: without a scheme
+	// callback the plugin falls back to the normal cookie session.
+	mux.HandleFunc("/oauth/openid/login", func(w http.ResponseWriter, r *http.Request) {
 		handleMobileLogin(cfg, w, r)
 	})
 	return mux
@@ -295,11 +320,11 @@ func resetBody(resp *http.Response, body []byte) {
 // custom-scheme callback as mobile_redirect.
 func handleMobileLogin(cfg config, w http.ResponseWriter, r *http.Request) {
 	redirectTo := r.URL.Query().Get("redirect_to")
-	if redirectTo == "" {
-		http.Error(w, "missing redirect_to", http.StatusBadRequest)
-		return
+	// without redirect_to the plugin falls back to the normal cookie session
+	loc := cfg.pluginConnectPath
+	if redirectTo != "" {
+		loc += "?mobile_redirect=" + url.QueryEscape(redirectTo)
 	}
-	loc := cfg.pluginConnectPath + "?mobile_redirect=" + url.QueryEscape(redirectTo)
 	if cfg.debug {
 		log.Printf("mobile_login redirect_to=%q -> %s", redirectTo, loc)
 	}
